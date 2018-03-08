@@ -86,6 +86,25 @@ def generate_sequence(rnn : GeneratorRNN, length : int):
         lift = np.random.binomial(1,e)
 
         # Store stroke
-        strokes[i] = [lift,strokes[i-1][1]+sample[0],strokes[i-1][2]+sample[1]]
+        strokes[i] = [lift,sample[0],sample[1]]
 
-    return strokes
+    return relative_to_absolute(strokes)
+
+def relative_to_absolute(strokes):
+    output = np.copy(strokes)
+    for i in range(1,len(strokes)):
+        output[i] = [strokes[i][0],
+                strokes[i][1]+strokes[i-1][1],
+                strokes[i][2]+strokes[i-1][2]]
+    return output
+
+def absolute_to_relative(strokes):
+    output = np.copy(strokes)
+    for i in reversed(range(1,len(strokes))):
+        output[i] = [strokes[i][0],
+                strokes[i][1]-strokes[i-1][1],
+                strokes[i][2]-strokes[i-1][2]]
+    return output
+
+def train(rnn, strokes):
+    pass
