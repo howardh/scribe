@@ -1,3 +1,6 @@
 admin/*
 **.pyc
 notebooks/.ipynb_checkpoints/*
+**.swp
+.cs_files
+data
