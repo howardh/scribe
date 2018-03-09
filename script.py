@@ -2,11 +2,14 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from tqdm import tqdm
 import numpy as np
 from utils import plot_stroke
 
-with open('data/strokes.npy','rb') as f:
-    strokes = np.load(f,encoding='bytes')
+def load_data():
+    with open('data/strokes.npy','rb') as f:
+        strokes = np.load(f,encoding='bytes')
+    return strokes
 
 class GeneratorRNN(torch.nn.Module):
     def __init__(self, num_components=1):
@@ -40,7 +43,7 @@ class GeneratorRNN(torch.nn.Module):
         return e,pi,mu,sigma,rho
 
     def forward(self, input, hidden):
-        output, (hidden_state, cell_state) = self.lstm(input, hidden)
+        output, hidden = self.lstm(input, hidden)
         output = self.linear(output)
         output = output.view(-1)
         e,pi,mu,sigma,rho = self.split_outputs(output)
@@ -49,7 +52,7 @@ class GeneratorRNN(torch.nn.Module):
         mu = mu
         sigma = torch.exp(sigma)
         rho = torch.tanh(rho)
-        return e,pi,mu,sigma,rho,hidden_state,cell_state
+        return e,pi,mu,sigma,rho,hidden
 
     def init_hidden(self):
         hidden = Variable(torch.zeros(1, 1, 900))
@@ -65,11 +68,10 @@ def generate_sequence(rnn : GeneratorRNN, length : int):
     strokes = np.empty([length+1,3])
     strokes[0] = [0,0,0]
     for i in range(1,length+1):
-        e,pi,mu,sigma,rho,hidden_state,cell_state = rnn.forward(inputs, hidden)
+        e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden)
 
         e = e.data.numpy()
         rho = rho.data.numpy()
-
 
         # Sample from bivariate Gaussian mixture model
         # Choose a component
@@ -106,5 +108,59 @@ def absolute_to_relative(strokes):
                 strokes[i][2]-strokes[i-1][2]]
     return output
 
-def train(rnn, strokes):
-    pass
+def prob(x, y):
+    """
+    Return the probability of the next point being x given that parameters y
+    were outputted by the neural net.
+    See equation (23)
+    """
+    e,pi,mu,sigma,rho = y
+    num_components = mu.size()[0]
+    p = 1
+    for i in range(num_components):
+        p *= pi[i]*normal(x, mu[i],sigma[i],rho)
+        if x[0][0].data.numpy()[0] == 1:
+            p *= e
+        else:
+            p *= (1-e)
+    return p
+
+def normal(x, mu, sigma, rho):
+    x = x[0][1:]
+    z = torch.pow((x[0]-mu[0])/sigma[0],2)+torch.pow((x[1]-mu[1])/sigma[1],2)-2*rho*(x[0]-mu[0])*(x[1]-mu[1])/(sigma[0]*sigma[1])
+    return 1/(2*np.pi*sigma[0]*sigma[1]*torch.sqrt(1-rho*rho))*torch.exp(-z/(2*(1-rho*rho)))
+
+def train(rnn : GeneratorRNN, strokes):
+    # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
+    # See parameters in equation (42)-(45)
+    # Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
+    # Reference http://pytorch.org/docs/master/optim.html
+    # (42) is Wikipedia's beta1 and beta2
+    # (43) is momentum
+    # (44) is learning rate
+    # (45) is epsilon (added to denom for numerical stability)
+    # Skipped out on Momentum, since it's not implemented by pytorch
+    optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
+    #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
+    strokes_var = Variable(torch.from_numpy(strokes).float(), requires_grad=False)
+    hidden = rnn.init_hidden()
+    loss = 0
+    for i in range(len(strokes)):
+        x = strokes_var[i].view(1,-1)
+        e,pi,mu,sigma,rho,hidden = rnn(x, hidden)
+        y = (e,pi,mu,sigma,rho)
+        loss += -torch.log(prob(x,y))
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+def train_all(rnn : GeneratorRNN, data):
+    for strokes in tqdm(data):
+        train(rnn, strokes)
+
+if __name__=='__main__':
+    data = load_data()
+    rnn = GeneratorRNN(1)
+    train_all(rnn, data)
+    strokes = generate_sequence(rnn, 100)
+    plot_stroke(strokes, 'output/1.png')

@@ -42,3 +42,10 @@ def test_forward_no_errors():
     inputs = Variable(torch.zeros(1,3))
     hidden = rnn.init_hidden()
     rnn(inputs, hidden)
+
+def test_forward_values():
+    """
+    Check that all outputs from the forward pass are in the correct range.
+    See (18)-(21)
+    """
+    pass #TODO
