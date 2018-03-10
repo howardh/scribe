@@ -10,3 +10,7 @@ def test_no_errors():
     rnn = GeneratorRNN(1)
     strokes = generate_sequence(rnn, 10)
     plot_stroke(strokes, 'strokes.png')
+
+    rnn = GeneratorRNN(20)
+    strokes = generate_sequence(rnn, 10)
+    plot_stroke(strokes, 'strokes.png')

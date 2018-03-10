@@ -11,6 +11,17 @@ def load_data():
         strokes = np.load(f,encoding='bytes')
     return strokes
 
+def normalize_strokes(strokes):
+    strokes = absolute_to_relative(strokes)
+    m = np.mean(strokes, axis=0)
+    s = np.std(strokes, axis=0)
+    output = np.empty(strokes.shape)
+    for i in range(len(strokes)):
+        output[i][0] = strokes[i][0]
+        output[i][1] = (strokes[i][1]-m[1])/s[1]
+        output[i][2] = (strokes[i][2]-m[2])/s[2]
+    return output
+
 class GeneratorRNN(torch.nn.Module):
     def __init__(self, num_components=1, use_cuda=False):
         super(GeneratorRNN,self).__init__()
@@ -20,7 +31,7 @@ class GeneratorRNN(torch.nn.Module):
         self.lstm = torch.nn.LSTM(input_size=3, hidden_size=900, num_layers=1,
                 bias=True)
         self.linear = torch.nn.Linear(in_features=900,out_features=1+(1+2+2+1)*self.num_components)
-        self.softmax = torch.nn.Softmax(dim=0)
+        self.softmax = torch.nn.Softmax(dim=2)
 
         if self.use_cuda:
             self.lstm = self.lstm.cuda()
@@ -28,36 +39,37 @@ class GeneratorRNN(torch.nn.Module):
             self.softmax = self.softmax.cuda()
 
     def split_outputs(self, output):
-        e = output[0]
+        e = output[:,:,0]
 
         start = 1
         end = 1+self.num_components
-        pi = output[start:end]
+        pi = output[:,:,start:end]
 
         start = end
         end = end+2*self.num_components
-        mu = output[start:end].view(-1,2)
+        mu = output[:,:,start:end]
 
         start = end
         end = end+2*self.num_components
-        sigma = output[start:end].view(-1,2)
+        sigma = output[:,:,start:end]
 
         start = end
         end = end+self.num_components
-        rho = output[start:end]
+        rho = output[:,:,start:end]
 
         return e,pi,mu,sigma,rho
 
     def forward(self, input, hidden):
         output, hidden = self.lstm(input, hidden)
         output = self.linear(output)
-        output = output.view(-1)
         e,pi,mu,sigma,rho = self.split_outputs(output)
-        e = 1/(1+torch.exp(e))
-        pi = self.softmax(pi)
-        mu = mu
-        sigma = torch.exp(sigma)
-        rho = torch.tanh(rho)
+
+        n = self.num_components
+        e = 1/(1+torch.exp(e)).view(-1)
+        pi = self.softmax(pi).view(-1,n)
+        mu = mu.contiguous().view(-1,n,2)
+        sigma = torch.exp(sigma).view(-1,n,2)
+        rho = torch.tanh(rho).view(-1,n)
         return e,pi,mu,sigma,rho,hidden
 
     def init_hidden(self):
@@ -83,22 +95,18 @@ def generate_sequence(rnn : GeneratorRNN, length : int):
     for i in range(1,length+1):
         e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden)
 
-        if rnn.use_cuda:
-            e = e.data.cpu().numpy()
-            rho = rho.data.cpu().numpy()
-        else:
-            e = e.data.numpy()
-            rho = rho.data.numpy()
-
         # Sample from bivariate Gaussian mixture model
         # Choose a component
-        component = np.random.choice(range(rnn.num_components))
+        pi = pi[0,:].view(-1).data.cpu().numpy()
+        component = np.random.choice(range(rnn.num_components), p=pi)
         if rnn.use_cuda:
-            mu = mu[component].data.cpu().numpy()
-            sigma = sigma[component].data.cpu().numpy()
+            mu = mu[0,component].data.cpu().numpy()
+            sigma = sigma[0,component].data.cpu().numpy()
+            rho = rho[0,component].data.cpu().numpy()
         else:
-            mu = mu[component].data.numpy()
-            sigma = sigma[component].data.numpy()
+            mu = mu[0,component].data.numpy()
+            sigma = sigma[0,component].data.numpy()
+            rho = rho[0,component].data.numpy()
 
         # Sample from the selected Gaussian
         covar = [[sigma[0]**2, rho*sigma[0]*sigma[1]],
@@ -106,10 +114,19 @@ def generate_sequence(rnn : GeneratorRNN, length : int):
         sample = np.random.multivariate_normal(mu,covar)
 
         # Sample from Bernoulli
-        lift = np.random.binomial(1,e)
+        if rnn.use_cuda:
+            e = e.data.cpu().numpy()
+        else:
+            e = e.data.numpy()
+        lift = np.random.binomial(1,e)[0]
 
         # Store stroke
         strokes[i] = [lift,sample[0],sample[1]]
+
+        # Update next input
+        inputs.data[0][0][0] = int(lift)
+        inputs.data[0][0][1] += sample[0]
+        inputs.data[0][0][2] += sample[1]
 
     return relative_to_absolute(strokes)
 
@@ -136,26 +153,88 @@ def prob(x, y):
     See equation (23)
     """
     e,pi,mu,sigma,rho = y
-    num_components = mu.size()[0]
-    p = 1
+    num_components = mu.size()[1]
+    p = 0
     for i in range(num_components):
-        p *= pi[i]*normal(x, mu[i],sigma[i],rho)
-        if x.is_cuda:
-            temp = x[0][0][0].data.cpu().numpy()[0]
-        else:
-            temp = x[0][0][0].data.numpy()[0]
-        if temp == 1:
-            p *= e
-        else:
-            p *= (1-e)
+        p += pi[:,i]*normal(x[:,0,1:], mu[:,i,:],sigma[:,i,:],rho[:,i])
+
+    if x.is_cuda:
+        temp = x[0,0,0].data.cpu().numpy()[0]
+    else:
+        temp = x[0,0,0].data.numpy()[0]
+    if temp == 1:
+        p *= e
+    else:
+        p *= (1-e)
     return p
 
 def normal(x, mu, sigma, rho):
-    x = x[0][0][1:]
-    z = torch.pow((x[0]-mu[0])/sigma[0],2)+torch.pow((x[1]-mu[1])/sigma[1],2)-2*rho*(x[0]-mu[0])*(x[1]-mu[1])/(sigma[0]*sigma[1])
-    return 1/(2*np.pi*sigma[0]*sigma[1]*torch.sqrt(1-rho*rho))*torch.exp(-z/(2*(1-rho*rho)))
+    z  = torch.pow((x[:,0]-mu[:,0])/sigma[:,0],2)
+    z += torch.pow((x[:,1]-mu[:,1])/sigma[:,1],2)
+    #temp = torch.pow((x-mu)/sigma,2)
+    #print("z",z)
+    #print("temp",temp)
+    z -= 2*rho*(x[:,0]-mu[:,0])*(x[:,1]-mu[:,1])/(sigma[:,0]*sigma[:,1])
+    output = 1/(2*np.pi*sigma[:,0]*sigma[:,1]*torch.sqrt(1-rho*rho))*torch.exp(-z/(2*(1-rho*rho)))
+    return output
 
-def train(rnn : GeneratorRNN, strokes):
+def print_avg_grad(rnn: GeneratorRNN):
+    vals = []
+    for p in rnn.parameters():
+        vals += list(np.abs(p.grad.view(-1).data.cpu().numpy()))
+    print('Average grad: %f' % np.mean(vals))
+
+def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
+    strokes_tensor = torch.from_numpy(strokes).float()
+    if rnn.use_cuda:
+        strokes_tensor = strokes_tensor.cuda()
+    strokes_var = Variable(strokes_tensor, requires_grad=False)
+    hidden = rnn.init_hidden()
+    #loss = -1
+    loss = 0
+    for i in range(len(strokes)-1):
+        x = strokes_var[i].view(1,1,3)
+        e,pi,mu,sigma,rho,hidden = rnn(x, hidden)
+        y = (e,pi,mu,sigma,rho)
+        x2 = strokes_var[i+1].view(1,1,3)
+        #loss += -torch.log(prob(x2,y))
+        loss += -prob(x2,y)
+    optimizer.zero_grad()
+    print(loss)
+    loss.backward()
+    #torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
+    print_avg_grad(rnn)
+    #print(rnn.parameters().__next__()[0][0])
+    optimizer.step()
+
+def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data):
+    i = 0
+    for strokes in tqdm(data):
+        generated_strokes = generate_sequence(rnn, 100)
+        plot_stroke(generated_strokes, 'output/%d.png'%i)
+        i+=1
+        train(rnn, optimizer, strokes)
+    return
+
+def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
+    i = 0
+    pbar = tqdm()
+    pbar.update(0)
+    while True:
+        generated_strokes = generate_sequence(rnn, 100)
+        plot_stroke(generated_strokes, 'output2/%d.png'%i)
+        i+=1
+        train(rnn, optimizer, strokes)
+        pbar.update(1)
+    return
+
+if __name__=='__main__':
+    data = load_data()
+    x = normalize_strokes(data[0])
+    l = [len(d) for d in data]
+    print(max(l)) #1191
+    rnn = GeneratorRNN(20, use_cuda=True)
+
     # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
     # See parameters in equation (42)-(45)
     # Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
@@ -165,32 +244,9 @@ def train(rnn : GeneratorRNN, strokes):
     # (44) is learning rate
     # (45) is epsilon (added to denom for numerical stability)
     # Skipped out on Momentum, since it's not implemented by pytorch
-    optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
+    #optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
     #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
-    strokes_tensor = torch.from_numpy(strokes).float()
-    if rnn.use_cuda:
-        strokes_tensor = strokes_tensor.cuda()
-    strokes_var = Variable(strokes_tensor, requires_grad=False)
-    hidden = rnn.init_hidden()
-    loss = 0
-    for i in range(len(strokes)):
-        x = strokes_var[i].view(1,1,-1)
-        e,pi,mu,sigma,rho,hidden = rnn(x, hidden)
-        y = (e,pi,mu,sigma,rho)
-        loss += -torch.log(prob(x,y))
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+    optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
 
-def train_all(rnn : GeneratorRNN, data):
-    i = 0
-    for strokes in tqdm(data):
-        strokes = generate_sequence(rnn, 100)
-        plot_stroke(strokes, 'output/%d.png'%i)
-        i+=1
-        train(rnn, strokes)
-
-if __name__=='__main__':
-    data = load_data()
-    rnn = GeneratorRNN(1, use_cuda=True)
-    train_all(rnn, data)
+    #train_all(rnn, data)
+    train_one(rnn, optimizer, x)

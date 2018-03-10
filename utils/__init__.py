@@ -13,6 +13,8 @@ def plot_stroke(stroke, save_name=None):
 
     size_x = x.max() - x.min() + 1.
     size_y = y.max() - y.min() + 1.
+    if numpy.isnan(size_x) or numpy.isnan(size_y):
+        print(x,y)
 
     f.set_size_inches(5. * size_x / size_y, 5.)
 
