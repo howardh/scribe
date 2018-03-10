@@ -12,7 +12,6 @@ def load_data():
     return strokes
 
 def normalize_strokes(strokes):
-    strokes = absolute_to_relative(strokes)
     m = np.mean(strokes, axis=0)
     s = np.std(strokes, axis=0)
     output = np.empty(strokes.shape)
@@ -60,6 +59,7 @@ class GeneratorRNN(torch.nn.Module):
         return e,pi,mu,sigma,rho
 
     def forward(self, input, hidden):
+        # batch size * sequence len * features (3)
         output, hidden = self.lstm(input, hidden)
         output = self.linear(output)
         e,pi,mu,sigma,rho = self.split_outputs(output)
@@ -67,6 +67,7 @@ class GeneratorRNN(torch.nn.Module):
         n = self.num_components
         e = 1/(1+torch.exp(e)).view(-1)
         pi = self.softmax(pi).view(-1,n)
+        #pi = Variable(torch.zeros([n]).view(-1,n).cuda())
         mu = mu.contiguous().view(-1,n,2)
         sigma = torch.exp(sigma).view(-1,n,2)
         rho = torch.tanh(rho).view(-1,n)
@@ -125,10 +126,10 @@ def generate_sequence(rnn : GeneratorRNN, length : int):
 
         # Update next input
         inputs.data[0][0][0] = int(lift)
-        inputs.data[0][0][1] += sample[0]
-        inputs.data[0][0][2] += sample[1]
+        inputs.data[0][0][1] = sample[0]
+        inputs.data[0][0][2] = sample[1]
 
-    return relative_to_absolute(strokes)
+    return strokes
 
 def relative_to_absolute(strokes):
     output = np.copy(strokes)
@@ -171,9 +172,7 @@ def prob(x, y):
 def normal(x, mu, sigma, rho):
     z  = torch.pow((x[:,0]-mu[:,0])/sigma[:,0],2)
     z += torch.pow((x[:,1]-mu[:,1])/sigma[:,1],2)
-    #temp = torch.pow((x-mu)/sigma,2)
-    #print("z",z)
-    #print("temp",temp)
+    #z = torch.pow((x-mu)/sigma,2)
     z -= 2*rho*(x[:,0]-mu[:,0])*(x[:,1]-mu[:,1])/(sigma[:,0]*sigma[:,1])
     output = 1/(2*np.pi*sigma[:,0]*sigma[:,1]*torch.sqrt(1-rho*rho))*torch.exp(-z/(2*(1-rho*rho)))
     return output
@@ -190,20 +189,22 @@ def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
         strokes_tensor = strokes_tensor.cuda()
     strokes_var = Variable(strokes_tensor, requires_grad=False)
     hidden = rnn.init_hidden()
-    #loss = -1
-    loss = 0
-    for i in range(len(strokes)-1):
+    total_loss = 0
+    eps = 0.00001
+    for i in tqdm(range(len(strokes)-1)):
         x = strokes_var[i].view(1,1,3)
         e,pi,mu,sigma,rho,hidden = rnn(x, hidden)
         y = (e,pi,mu,sigma,rho)
         x2 = strokes_var[i+1].view(1,1,3)
-        #loss += -torch.log(prob(x2,y))
-        loss += -prob(x2,y)
+
+        loss = -torch.log(prob(x2,y)+eps)
+        #loss = -prob(x2,y)
+        total_loss += loss
+
     optimizer.zero_grad()
-    print(loss)
-    loss.backward()
-    #torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
-    print_avg_grad(rnn)
+    print("Loss: ", total_loss)
+    total_loss.backward()
+    torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
     #print(rnn.parameters().__next__()[0][0])
     optimizer.step()
 
@@ -222,11 +223,35 @@ def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
     pbar.update(0)
     while True:
         generated_strokes = generate_sequence(rnn, 100)
-        plot_stroke(generated_strokes, 'output2/%d.png'%i)
+        plot_stroke(generated_strokes, 'output/%d.png'%i)
         i+=1
         train(rnn, optimizer, strokes)
         pbar.update(1)
     return
+
+def printgradnorm(self, grad_input, grad_output):
+    for g in grad_output:
+        if g is None:
+            continue
+        if np.isnan(g.data.norm()):
+            print('Inside ' + self.__class__.__name__ + ' backward')
+            print('Inside class:' + self.__class__.__name__)
+            print('')
+            print('grad_input: ', type(grad_input))
+            print('grad_input[0]: ', type(grad_input[0]))
+            print('grad_output: ', type(grad_output))
+            print('grad_output[0]: ', type(grad_output[0]))
+            print('')
+            print('grad_input size:', grad_input[0].size())
+            print('grad_output size:', grad_output[0].size())
+            print('grad_input norm:', grad_input[0].data.norm())
+            print('grad_output norm:', grad_output[0].data.norm())
+            raise Exception("boop")
+
+def foo():
+    # Check what plot thing does
+    x = np.array([[0,0,0],[0,1,1],[0,1,0],[0,1,1],[1,0,0]])
+    plot_stroke(x,'test.png')
 
 if __name__=='__main__':
     data = load_data()
@@ -234,6 +259,9 @@ if __name__=='__main__':
     l = [len(d) for d in data]
     print(max(l)) #1191
     rnn = GeneratorRNN(20, use_cuda=True)
+    rnn.lstm.register_backward_hook(printgradnorm)
+    rnn.linear.register_backward_hook(printgradnorm)
+    rnn.softmax.register_backward_hook(printgradnorm)
 
     # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
     # See parameters in equation (42)-(45)
@@ -250,3 +278,4 @@ if __name__=='__main__':
 
     #train_all(rnn, data)
     train_one(rnn, optimizer, x)
+    #train(rnn, optimizer, x)
