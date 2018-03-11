@@ -12,14 +12,19 @@ def load_data():
     return strokes
 
 def normalize_strokes(strokes):
-    m = np.mean(strokes, axis=0)
-    s = np.std(strokes, axis=0)
-    output = np.empty(strokes.shape)
-    for i in range(len(strokes)):
-        output[i][0] = strokes[i][0]
-        output[i][1] = (strokes[i][1]-m[1])/s[1]
-        output[i][2] = (strokes[i][2]-m[2])/s[2]
-    return output, m, s
+    concatenated = np.concatenate(strokes)
+    print(concatenated.shape)
+    m = np.mean(concatenated, axis=0)
+    s = np.std(concatenated, axis=0)
+    outputs = []
+    for stroke in tqdm(strokes,desc='Normalizing Strokes'):
+        output = np.empty(stroke.shape)
+        for i in range(len(stroke)):
+            output[i][0] = stroke[i][0]
+            output[i][1] = (stroke[i][1]-m[1])/s[1]
+            output[i][2] = (stroke[i][2]-m[2])/s[2]
+        outputs.append(output)
+    return outputs, m, s
 
 def unnormalize_strokes(strokes, m, s):
     output = np.empty(strokes.shape)
@@ -90,17 +95,17 @@ class GeneratorRNN(torch.nn.Module):
             cell = Variable(torch.zeros(1, 1, 900))
         return [hidden, cell]
 
-def generate_sequence(rnn : GeneratorRNN, length : int):
+def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
     """
     Generate a random sequence of handwritten strokes, with `length` strokes.
     """
     if rnn.use_cuda:
-        inputs = Variable(torch.zeros(1,1,3).float().cuda())
+        inputs = Variable(torch.Tensor(start).view(1,1,3).float().cuda())
     else:
-        inputs = Variable(torch.zeros(1,1,3).float())
+        inputs = Variable(torch.Tensor(start).view(1,1,3).float())
     hidden = rnn.init_hidden()
     strokes = np.empty([length+1,3])
-    strokes[0] = [0,0,0]
+    strokes[0] = start
     for i in range(1,length+1):
         e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden)
 
@@ -216,20 +221,21 @@ def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
     total_loss = compute_loss(rnn, strokes)
 
     optimizer.zero_grad()
-    print("Loss: ", total_loss)
+    tqdm.write("Loss: %s" % total_loss.data[0])
     total_loss.backward()
     torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
-    #print(rnn.parameters().__next__()[0][0])
     optimizer.step()
 
-def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data, unnorm):
+def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data, sm, ss):
     i = 0
-    for strokes in tqdm(data):
-        generated_strokes = generate_sequence(rnn, 100)
-        generated_strokes = unnorm(generated_strokes)
-        plot_stroke(generated_strokes, 'output/%d.png'%i)
-        i+=1
-        train(rnn, optimizer, strokes)
+    while True:
+        for strokes in tqdm(data):
+            if i%50 == 0:
+                generated_strokes = generate_sequence(rnn, 700, [0,sm[1],sm[2]])
+                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                plot_stroke(generated_strokes, 'output/%d.png'%i)
+            i+=1
+            train(rnn, optimizer, strokes)
     return
 
 def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, unnorm):
@@ -238,7 +244,7 @@ def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, un
     pbar.update(0)
     while True:
         if i%50 == 0:
-            generated_strokes = generate_sequence(rnn, 750)
+            generated_strokes = generate_sequence(rnn, 700)
             generated_strokes = unnorm(generated_strokes)
             plot_stroke(generated_strokes, 'output/%d.png'%i)
         i+=1
@@ -253,9 +259,7 @@ def foo():
 
 if __name__=='__main__':
     data = load_data()
-    x,m,s = normalize_strokes(data[0])
-    l = [len(d) for d in data]
-    print(max(l)) #1191
+    normalized_data,m,s = normalize_strokes(data)
     rnn = GeneratorRNN(20, use_cuda=True)
     #rnn.load_state_dict(torch.load('model.pt'))
 
@@ -272,6 +276,6 @@ if __name__=='__main__':
     #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
     #optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
 
-    #train_all(rnn, data)
-    train_one(rnn, optimizer, x, lambda strokes: unnormalize_strokes(strokes,m,s))
-    #train(rnn, optimizer, x)
+    train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
+    #train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
+    #train(rnn, optimizer, normalized_data[0])
