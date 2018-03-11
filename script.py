@@ -19,6 +19,14 @@ def normalize_strokes(strokes):
         output[i][0] = strokes[i][0]
         output[i][1] = (strokes[i][1]-m[1])/s[1]
         output[i][2] = (strokes[i][2]-m[2])/s[2]
+    return output, m, s
+
+def unnormalize_strokes(strokes, m, s):
+    output = np.empty(strokes.shape)
+    for i in range(len(strokes)):
+        output[i][0] = strokes[i][0]
+        output[i][1] = strokes[i][1]*s[1]+m[1]
+        output[i][2] = strokes[i][2]*s[2]+m[2]
     return output
 
 class GeneratorRNN(torch.nn.Module):
@@ -183,7 +191,7 @@ def print_avg_grad(rnn: GeneratorRNN):
         vals += list(np.abs(p.grad.view(-1).data.cpu().numpy()))
     print('Average grad: %f' % np.mean(vals))
 
-def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
+def compute_loss(rnn, strokes):
     strokes_tensor = torch.from_numpy(strokes).float()
     if rnn.use_cuda:
         strokes_tensor = strokes_tensor.cuda()
@@ -198,8 +206,14 @@ def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
         x2 = strokes_var[i+1].view(1,1,3)
 
         loss = -torch.log(prob(x2,y)+eps)
+        #loss = -torch.log(prob(x2,y))
         #loss = -prob(x2,y)
         total_loss += loss
+
+    return total_loss
+
+def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
+    total_loss = compute_loss(rnn, strokes)
 
     optimizer.zero_grad()
     print("Loss: ", total_loss)
@@ -208,45 +222,29 @@ def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
     #print(rnn.parameters().__next__()[0][0])
     optimizer.step()
 
-def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data):
+def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data, unnorm):
     i = 0
     for strokes in tqdm(data):
         generated_strokes = generate_sequence(rnn, 100)
+        generated_strokes = unnorm(generated_strokes)
         plot_stroke(generated_strokes, 'output/%d.png'%i)
         i+=1
         train(rnn, optimizer, strokes)
     return
 
-def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
+def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, unnorm):
     i = 0
     pbar = tqdm()
     pbar.update(0)
     while True:
-        generated_strokes = generate_sequence(rnn, 100)
-        plot_stroke(generated_strokes, 'output/%d.png'%i)
+        if i%50 == 0:
+            generated_strokes = generate_sequence(rnn, 750)
+            generated_strokes = unnorm(generated_strokes)
+            plot_stroke(generated_strokes, 'output/%d.png'%i)
         i+=1
         train(rnn, optimizer, strokes)
         pbar.update(1)
     return
-
-def printgradnorm(self, grad_input, grad_output):
-    for g in grad_output:
-        if g is None:
-            continue
-        if np.isnan(g.data.norm()):
-            print('Inside ' + self.__class__.__name__ + ' backward')
-            print('Inside class:' + self.__class__.__name__)
-            print('')
-            print('grad_input: ', type(grad_input))
-            print('grad_input[0]: ', type(grad_input[0]))
-            print('grad_output: ', type(grad_output))
-            print('grad_output[0]: ', type(grad_output[0]))
-            print('')
-            print('grad_input size:', grad_input[0].size())
-            print('grad_output size:', grad_output[0].size())
-            print('grad_input norm:', grad_input[0].data.norm())
-            print('grad_output norm:', grad_output[0].data.norm())
-            raise Exception("boop")
 
 def foo():
     # Check what plot thing does
@@ -255,13 +253,11 @@ def foo():
 
 if __name__=='__main__':
     data = load_data()
-    x = normalize_strokes(data[0])
+    x,m,s = normalize_strokes(data[0])
     l = [len(d) for d in data]
     print(max(l)) #1191
     rnn = GeneratorRNN(20, use_cuda=True)
-    rnn.lstm.register_backward_hook(printgradnorm)
-    rnn.linear.register_backward_hook(printgradnorm)
-    rnn.softmax.register_backward_hook(printgradnorm)
+    #rnn.load_state_dict(torch.load('model.pt'))
 
     # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
     # See parameters in equation (42)-(45)
@@ -272,10 +268,10 @@ if __name__=='__main__':
     # (44) is learning rate
     # (45) is epsilon (added to denom for numerical stability)
     # Skipped out on Momentum, since it's not implemented by pytorch
-    #optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
+    optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
     #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
-    optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
+    #optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
 
     #train_all(rnn, data)
-    train_one(rnn, optimizer, x)
+    train_one(rnn, optimizer, x, lambda strokes: unnormalize_strokes(strokes,m,s))
     #train(rnn, optimizer, x)
