@@ -83,6 +83,12 @@ def test_normal_value2():
     diff = np.sum(np.abs(output-expected))
     assert diff<0.00001
 
+def test_compute_loss():
+    pass
+
+def test_compute_loss_batch():
+    pass
+
 def test_train():
     rnn = GeneratorRNN(1)
     opt = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)

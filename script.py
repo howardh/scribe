@@ -34,21 +34,12 @@ def unnormalize_strokes(strokes, m, s):
         output[i][2] = strokes[i][2]*s[2]+m[2]
     return output
 
-class GeneratorRNN(torch.nn.Module):
-    def __init__(self, num_components=1, use_cuda=False):
-        super(GeneratorRNN,self).__init__()
-        self.use_cuda = use_cuda
+class BivariateGaussianMixtureLayer(torch.nn.Module):
+    def __init__(self, num_components=1):
+        super(BivariateGaussianMixtureLayer,self).__init__()
         # See page 23 for parameters
         self.num_components = num_components
-        self.lstm = torch.nn.LSTM(input_size=3, hidden_size=900, num_layers=1,
-                bias=True)
-        self.linear = torch.nn.Linear(in_features=900,out_features=1+(1+2+2+1)*self.num_components)
         self.softmax = torch.nn.Softmax(dim=2)
-
-        if self.use_cuda:
-            self.lstm = self.lstm.cuda()
-            self.linear = self.linear.cuda()
-            self.softmax = self.softmax.cuda()
 
     def split_outputs(self, output):
         e = output[:,:,0]
@@ -71,11 +62,9 @@ class GeneratorRNN(torch.nn.Module):
 
         return e,pi,mu,sigma,rho
 
-    def forward(self, input, hidden):
+    def forward(self, input):
         # batch size * sequence len * features (3)
-        output, hidden = self.lstm(input, hidden)
-        output = self.linear(output)
-        e,pi,mu,sigma,rho = self.split_outputs(output)
+        e,pi,mu,sigma,rho = self.split_outputs(input)
 
         n = self.num_components
         e = 1/(1+torch.exp(e)).view(-1)
@@ -84,10 +73,28 @@ class GeneratorRNN(torch.nn.Module):
         mu = mu.contiguous().view(-1,n,2)
         sigma = torch.exp(sigma).view(-1,n,2)
         rho = torch.tanh(rho).view(-1,n)
-        return e,pi,mu,sigma,rho,hidden
+        return e,pi,mu,sigma,rho
+
+class GeneratorRNN(torch.nn.Module):
+    def __init__(self, num_components=1):
+        super(GeneratorRNN,self).__init__()
+        # See page 23 for parameters
+        self.num_components = num_components
+        self.lstm = torch.nn.LSTM(input_size=3, hidden_size=900, num_layers=1,
+                bias=True)
+        self.linear = torch.nn.Linear(in_features=900,out_features=1+(1+2+2+1)*self.num_components)
+        self.bgm = BivariateGaussianMixtureLayer(num_components)
+
+    def forward(self, input, hidden):
+        # batch size * sequence len * features (3)
+        output, hidden = self.lstm(input, hidden)
+        output = self.linear(output)
+        output = self.bgm(output)
+        print(len(output + (hidden)))
+        return output + (hidden,)
 
     def init_hidden(self):
-        if self.use_cuda:
+        if self.is_cuda():
             hidden = Variable(torch.zeros(1, 1, 900).cuda())
             cell = Variable(torch.zeros(1, 1, 900).cuda())
         else:
@@ -95,11 +102,96 @@ class GeneratorRNN(torch.nn.Module):
             cell = Variable(torch.zeros(1, 1, 900))
         return [hidden, cell]
 
+    def is_cuda(self):
+        return next(self.parameters()).is_cuda
+
+class WindowLayer(torch.nn.Module):
+    def __init__(self, in_features, out_features, num_components=1, num_chars=26):
+        super(WindowLayer,self).__init__()
+        self.num_chars = num_chars
+        self.num_components = num_components
+        self.linear1 = torch.nn.Linear(in_features=in_features,out_features=3*self.num_components)
+        self.linear2 = torch.nn.Linear(in_features=self.num_chars,out_features=out_features)
+
+    def forward(self, inputs, hidden, sequence):
+        """
+        sequence -- An array of one-hot encodings for characters in 
+        """
+        n = self.num_components
+        output = self.linear1(inputs)
+        output = torch.exp(output)
+        output = output.view(-1,3,n)
+        hidden = hidden + output[:,2,:]
+        output[:,2,:] = hidden
+        a = output[:,0,:].contiguous().view(-1,1,n)
+        b = output[:,1,:].contiguous().view(-1,1,n)
+        k = output[:,2,:].contiguous().view(-1,1,n)
+        seq_len = sequence.size()[0]
+        r = Variable(torch.arange(seq_len).view(seq_len,1), requires_grad=False)
+        window_weight = a*torch.exp(-b*torch.pow(k-r,2))
+        window_weight = torch.sum(window_weight,dim=2)
+        window = window_weight.mm(sequence)
+        output = self.linear2(window)
+        return output, hidden
+
+    def init_hidden(self):
+        if self.is_cuda():
+            return Variable(torch.zeros(1,1,self.num_components).cuda())
+        else:
+            return Variable(torch.zeros(1,1,self.num_components))
+
+    def is_cuda(self):
+        return next(self.parameters()).is_cuda
+
+class ConditionedRNN(torch.nn.Module):
+    def __init__(self, num_components=1, num_chars=27):
+        super(ConditionedRNN,self).__init__()
+        # See page 23 for parameters
+        self.num_components = num_components
+        self.lstm1 = torch.nn.LSTM(input_size=3, hidden_size=400, num_layers=1, bias=True)
+        self.window = WindowLayer(in_features=400,out_features=400,
+                num_components=10, num_chars=num_chars)
+        self.lstm2 = torch.nn.LSTM(input_size=400, hidden_size=400, num_layers=1, bias=True)
+        self.linearx2 = torch.nn.Linear(in_features=3,out_features=400,
+                bias=False)
+        self.linear12 = torch.nn.Linear(in_features=400,out_features=400,
+                bias=False)
+        self.linearout = torch.nn.Linear(in_features=400,out_features=1+(1+2+2+1)*self.num_components)
+        self.bgm = BivariateGaussianMixtureLayer(num_components)
+
+        self.softmax = torch.nn.Softmax(dim=2)
+
+    def forward(self, input, hidden, sequence):
+        hidden1,hiddenw,hidden2 = hidden
+        output1, hidden1 = self.lstm1(input, hidden1)
+        outputw, hiddenw = self.window(output1, hiddenw, sequence)
+        input2 = self.linearx2(input)+output1
+        output2, hidden2 = self.lstm2(input2, hidden2)
+        outputbgm = self.bgm(output2)
+        return outputbgm + ((hidden1,hiddenw,hidden2),)
+
+    def init_hidden(self):
+        if self.is_cuda():
+            hidden1 = Variable(torch.zeros(1, 1, 400).cuda())
+            cell1 = Variable(torch.zeros(1, 1, 400).cuda())
+            hidden2 = Variable(torch.zeros(1, 1, 400).cuda())
+            cell2 = Variable(torch.zeros(1, 1, 400).cuda())
+        else:
+            hidden1 = Variable(torch.zeros(1, 1, 400))
+            cell1 = Variable(torch.zeros(1, 1, 400))
+            hidden2 = Variable(torch.zeros(1, 1, 400))
+            cell2 = Variable(torch.zeros(1, 1, 400))
+        hiddenw = self.window.init_hidden()
+        return (hidden1, cell1), hiddenw, (hidden2, cell2)
+
+    def is_cuda(self):
+        return next(self.parameters()).is_cuda
+
 def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
     """
     Generate a random sequence of handwritten strokes, with `length` strokes.
     """
-    if rnn.use_cuda:
+    if rnn.is_cuda():
         inputs = Variable(torch.Tensor(start).view(1,1,3).float().cuda())
     else:
         inputs = Variable(torch.Tensor(start).view(1,1,3).float())
@@ -113,7 +205,7 @@ def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
         # Choose a component
         pi = pi[0,:].view(-1).data.cpu().numpy()
         component = np.random.choice(range(rnn.num_components), p=pi)
-        if rnn.use_cuda:
+        if rnn.is_cuda():
             mu = mu[0,component].data.cpu().numpy()
             sigma = sigma[0,component].data.cpu().numpy()
             rho = rho[0,component].data.cpu().numpy()
@@ -128,7 +220,7 @@ def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
         sample = np.random.multivariate_normal(mu,covar)
 
         # Sample from Bernoulli
-        if rnn.use_cuda:
+        if rnn.is_cuda():
             e = e.data.cpu().numpy()
         else:
             e = e.data.numpy()
@@ -143,22 +235,6 @@ def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
         inputs.data[0][0][2] = sample[1]
 
     return strokes
-
-def relative_to_absolute(strokes):
-    output = np.copy(strokes)
-    for i in range(1,len(strokes)):
-        output[i] = [strokes[i][0],
-                strokes[i][1]+strokes[i-1][1],
-                strokes[i][2]+strokes[i-1][2]]
-    return output
-
-def absolute_to_relative(strokes):
-    output = np.copy(strokes)
-    for i in reversed(range(1,len(strokes))):
-        output[i] = [strokes[i][0],
-                strokes[i][1]-strokes[i-1][1],
-                strokes[i][2]-strokes[i-1][2]]
-    return output
 
 def prob(x, y):
     """
@@ -198,7 +274,7 @@ def print_avg_grad(rnn: GeneratorRNN):
 
 def compute_loss(rnn, strokes):
     strokes_tensor = torch.from_numpy(strokes).float()
-    if rnn.use_cuda:
+    if rnn.is_cuda():
         strokes_tensor = strokes_tensor.cuda()
     strokes_var = Variable(strokes_tensor, requires_grad=False)
     hidden = rnn.init_hidden()
@@ -263,19 +339,19 @@ if __name__=='__main__':
     rnn = GeneratorRNN(20, use_cuda=True)
     #rnn.load_state_dict(torch.load('model.pt'))
 
-    # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
-    # See parameters in equation (42)-(45)
-    # Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
-    # Reference http://pytorch.org/docs/master/optim.html
-    # (42) is Wikipedia's beta1 and beta2
-    # (43) is momentum
-    # (44) is learning rate
-    # (45) is epsilon (added to denom for numerical stability)
-    # Skipped out on Momentum, since it's not implemented by pytorch
-    optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
-    #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
-    #optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
+    ## Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
+    ## See parameters in equation (42)-(45)
+    ## Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
+    ## Reference http://pytorch.org/docs/master/optim.html
+    ## (42) is Wikipedia's beta1 and beta2
+    ## (43) is momentum
+    ## (44) is learning rate
+    ## (45) is epsilon (added to denom for numerical stability)
+    ## Skipped out on Momentum, since it's not implemented by pytorch
+    #optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
+    ##optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
+    ##optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
 
-    train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
-    #train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
-    #train(rnn, optimizer, normalized_data[0])
+    #train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
+    ##train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
+    ##train(rnn, optimizer, normalized_data[0])

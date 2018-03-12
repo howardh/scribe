@@ -3,15 +3,16 @@ import torch
 from torch.autograd import Variable
 
 from script import GeneratorRNN
+from script import BivariateGaussianMixtureLayer
 
 def test_split_outputs_all_unique():
     """
     Check that split_outputs() separates everything properly and no output is
     accidentally used for multiple purposes.
     """
-    rnn = GeneratorRNN(1)
+    bgm= BivariateGaussianMixtureLayer(1)
     outputs = Variable(torch.from_numpy(np.array(range(7))).view(1,-1,7))
-    split = rnn.split_outputs(outputs)
+    split = bgm.split_outputs(outputs)
     all_vals = []
     for s in split:
         all_vals += s.data.view(-1).numpy().tolist()
@@ -19,9 +20,9 @@ def test_split_outputs_all_unique():
     all_vals = set(all_vals)
     assert len(all_vals)==7
 
-    rnn = GeneratorRNN(2)
+    bgm = BivariateGaussianMixtureLayer(2)
     outputs = Variable(torch.from_numpy(np.array(range(1+6*2))).view(1,-1,1+6*2))
-    split = rnn.split_outputs(outputs)
+    split = bgm.split_outputs(outputs)
     all_vals = []
     for s in split:
         all_vals += s.data.view(-1).numpy().tolist()
@@ -90,3 +91,20 @@ def test_forward():
     inputs = Variable(torch.zeros(10,1,3))
     hidden = rnn.init_hidden()
     e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
+
+def test_forward_batch():
+    rnn = GeneratorRNN(1)
+    seq_len = 1
+    batch_len = 2
+    features = 3
+    inputs = Variable(torch.zeros(seq_len, batch_len, features))
+    hidden = rnn.init_hidden()
+    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
+    print(mu)
+
+    inputs = Variable(torch.zeros(1,1,3))
+    hidden = rnn.init_hidden()
+    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
+    print(mu)
+    #assert False
+    #TODO: Assert that the values from the batch and non-batch forward call are the same
