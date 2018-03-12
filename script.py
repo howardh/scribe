@@ -149,7 +149,10 @@ class WindowLayer(torch.nn.Module):
         b = output[:,1,:].contiguous().view(-1,1,n)
         k = output[:,2,:].contiguous().view(-1,1,n)
         seq_len = sequence.size()[0]
-        r = Variable(torch.arange(seq_len).view(seq_len,1), requires_grad=False)
+        if self.is_cuda():
+            r = Variable(torch.arange(seq_len).view(seq_len,1).cuda(), requires_grad=False)
+        else:
+            r = Variable(torch.arange(seq_len).view(seq_len,1), requires_grad=False)
         window_weight = a*torch.exp(-b*torch.pow(k-r,2))
         window_weight = torch.sum(window_weight,dim=2)
         window = window_weight.mm(sequence)
@@ -427,6 +430,20 @@ def train_conditioned(rnn : ConditionedRNN, optimizer : torch.optim.Optimizer,
     torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
     optimizer.step()
 
+def train_all_conditioned(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data, sentences, sm, ss, target_sentence=None):
+    i = 0
+    while True:
+        for strokes, sentence in tqdm(zip(data, sentences)):
+            if target_sentence is not None and i%50 == 0:
+                generated_strokes = generate_conditioned_sequence(rnn, 700,
+                        target_sentence, [0,sm[1],sm[2]])
+                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                plot_stroke(generated_strokes, 'output_cond/%d.png'%i)
+                torch.save(rnn.state_dict(), "models_cond/%d.pt"%i)
+            i+=1
+            train_conditioned(rnn, optimizer, strokes, sentence)
+    return
+
 def foo():
     # Check what plot thing does
     x = np.array([[0,0,0],[0,1,1],[0,1,0],[0,1,1],[1,0,0]])
@@ -437,26 +454,31 @@ if __name__=='__main__':
     normalized_data,m,s = normalize_strokes(data)
     sentences = load_sentences()
     alphabet, alphabet_dict = compute_alphabet(sentences)
+    sentence_vars = [Variable(torch.from_numpy(sentence_to_vectors(s,alphabet_dict)).float().cuda(),
+        requires_grad=False) for s in tqdm(sentences,desc="Converting Sentences")]
     #rnn = GeneratorRNN(20)
     rnn = ConditionedRNN(20, len(alphabet))
     rnn.cuda()
     #rnn.load_state_dict(torch.load('model.pt'))
 
-    ## Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
-    ## See parameters in equation (42)-(45)
-    ## Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
-    ## Reference http://pytorch.org/docs/master/optim.html
-    ## (42) is Wikipedia's beta1 and beta2
-    ## (43) is momentum
-    ## (44) is learning rate
-    ## (45) is epsilon (added to denom for numerical stability)
-    ## Skipped out on Momentum, since it's not implemented by pytorch
-    #optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
-    ##optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
-    ##optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
+    # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
+    # See parameters in equation (42)-(45)
+    # Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
+    # Reference http://pytorch.org/docs/master/optim.html
+    # (42) is Wikipedia's beta1 and beta2
+    # (43) is momentum
+    # (44) is learning rate
+    # (45) is epsilon (added to denom for numerical stability)
+    # Skipped out on Momentum, since it's not implemented by pytorch
+    optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
+    #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
+    #optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
 
     #train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
-    ##train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
-    ##train(rnn, optimizer, normalized_data[0])
-    train_conditioned(rnn, optimizer, normalized_data[0], sentences[0])
+    #train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
+    #train(rnn, optimizer, normalized_data[0])
 
+    target_sentence = Variable(torch.from_numpy(sentence_to_vectors("Hello World!",alphabet_dict)).float().cuda(), requires_grad=False)
+    train_all_conditioned(rnn, optimizer, normalized_data, sentence_vars, m.tolist(),
+            s.tolist(), target_sentence=target_sentence)
+    #train_conditioned(rnn, optimizer, normalized_data[0], sentence_vars[0])
