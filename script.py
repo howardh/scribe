@@ -11,6 +11,28 @@ def load_data():
         strokes = np.load(f,encoding='bytes')
     return strokes
 
+def load_sentences():
+    with open('data/sentences.txt','r') as f:
+        lines = [x.strip() for x in f.readlines()]
+    return lines
+
+def compute_alphabet(sentences):
+    alphabet = set()
+    for s in tqdm(sentences):
+        alphabet.update(set(s))
+    alphabet = list(alphabet)
+    alphabet.sort()
+    alpha_dict = dict([(v,k) for k,v in enumerate(alphabet)])
+    return alphabet, alpha_dict
+
+def sentence_to_vectors(sentence, alphabet_dict):
+    n = len(alphabet_dict)
+    slen = len(sentence)
+    output = np.zeros([slen, n])
+    for i,c in enumerate(sentence):
+        output[i,alphabet_dict[c]] = 1
+    return output
+
 def normalize_strokes(strokes):
     concatenated = np.concatenate(strokes)
     print(concatenated.shape)
@@ -287,8 +309,25 @@ def compute_loss(rnn, strokes):
         x2 = strokes_var[i+1].view(1,1,3)
 
         loss = -torch.log(prob(x2,y)+eps)
-        #loss = -torch.log(prob(x2,y))
-        #loss = -prob(x2,y)
+        total_loss += loss
+
+    return total_loss
+
+def compute_loss_conditioned(rnn, strokes, sentence):
+    strokes_tensor = torch.from_numpy(strokes).float()
+    if rnn.is_cuda():
+        strokes_tensor = strokes_tensor.cuda()
+    strokes_var = Variable(strokes_tensor, requires_grad=False)
+    hidden = rnn.init_hidden()
+    total_loss = 0
+    eps = 0.00001
+    for i in tqdm(range(len(strokes)-1)):
+        x = strokes_var[i].view(1,1,3)
+        e,pi,mu,sigma,rho,hidden = rnn(x, hidden, sentence)
+        y = (e,pi,mu,sigma,rho)
+        x2 = strokes_var[i+1].view(1,1,3)
+
+        loss = -torch.log(prob(x2,y)+eps)
         total_loss += loss
 
     return total_loss
@@ -328,6 +367,16 @@ def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, un
         pbar.update(1)
     return
 
+def train_conditioned(rnn : ConditionedRNN, optimizer : torch.optim.Optimizer,
+        strokes, sentence):
+    total_loss = compute_loss_conditioned(rnn, strokes, sentence)
+
+    optimizer.zero_grad()
+    tqdm.write("Loss: %s" % total_loss.data[0])
+    total_loss.backward()
+    torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
+    optimizer.step()
+
 def foo():
     # Check what plot thing does
     x = np.array([[0,0,0],[0,1,1],[0,1,0],[0,1,1],[1,0,0]])
@@ -335,8 +384,11 @@ def foo():
 
 if __name__=='__main__':
     data = load_data()
-    normalized_data,m,s = normalize_strokes(data)
-    rnn = GeneratorRNN(20, use_cuda=True)
+    sentences = load_sentences()
+    alphabet, alphabet_dict = compute_alphabet(sentences)
+    #normalized_data,m,s = normalize_strokes(data)
+    rnn = GeneratorRNN(20)
+    rnn.cuda()
     #rnn.load_state_dict(torch.load('model.pt'))
 
     ## Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
