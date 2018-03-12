@@ -258,6 +258,56 @@ def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
 
     return strokes
 
+def generate_conditioned_sequence(rnn : ConditionedRNN, length : int,
+        sentence, start = [0,0,0]):
+    """
+    Generate a random sequence of handwritten strokes, with `length` strokes.
+    """
+    if rnn.is_cuda():
+        inputs = Variable(torch.Tensor(start).view(1,1,3).float().cuda())
+    else:
+        inputs = Variable(torch.Tensor(start).view(1,1,3).float())
+    hidden = rnn.init_hidden()
+    strokes = np.empty([length+1,3])
+    strokes[0] = start
+    for i in range(1,length+1):
+        e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden, sentence)
+
+        # Sample from bivariate Gaussian mixture model
+        # Choose a component
+        pi = pi[0,:].view(-1).data.cpu().numpy()
+        component = np.random.choice(range(rnn.num_components), p=pi)
+        if rnn.is_cuda():
+            mu = mu[0,component].data.cpu().numpy()
+            sigma = sigma[0,component].data.cpu().numpy()
+            rho = rho[0,component].data.cpu().numpy()
+        else:
+            mu = mu[0,component].data.numpy()
+            sigma = sigma[0,component].data.numpy()
+            rho = rho[0,component].data.numpy()
+
+        # Sample from the selected Gaussian
+        covar = [[sigma[0]**2, rho*sigma[0]*sigma[1]],
+                [rho*sigma[0]*sigma[1], sigma[1]**2]] # See https://en.wikipedia.org/wiki/Multivariate_normal_distribution
+        sample = np.random.multivariate_normal(mu,covar)
+
+        # Sample from Bernoulli
+        if rnn.is_cuda():
+            e = e.data.cpu().numpy()
+        else:
+            e = e.data.numpy()
+        lift = np.random.binomial(1,e)[0]
+
+        # Store stroke
+        strokes[i] = [lift,sample[0],sample[1]]
+
+        # Update next input
+        inputs.data[0][0][0] = int(lift)
+        inputs.data[0][0][1] = sample[0]
+        inputs.data[0][0][2] = sample[1]
+
+    return strokes
+
 def prob(x, y):
     """
     Return the probability of the next point being x given that parameters y
@@ -384,10 +434,11 @@ def foo():
 
 if __name__=='__main__':
     data = load_data()
+    normalized_data,m,s = normalize_strokes(data)
     sentences = load_sentences()
     alphabet, alphabet_dict = compute_alphabet(sentences)
-    #normalized_data,m,s = normalize_strokes(data)
-    rnn = GeneratorRNN(20)
+    #rnn = GeneratorRNN(20)
+    rnn = ConditionedRNN(20, len(alphabet))
     rnn.cuda()
     #rnn.load_state_dict(torch.load('model.pt'))
 
@@ -407,3 +458,5 @@ if __name__=='__main__':
     #train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
     ##train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
     ##train(rnn, optimizer, normalized_data[0])
+    train_conditioned(rnn, optimizer, normalized_data[0], sentences[0])
+
