@@ -84,16 +84,16 @@ class BivariateGaussianMixtureLayer(torch.nn.Module):
 
         return e,pi,mu,sigma,rho
 
-    def forward(self, input):
+    def forward(self, input, bias=0):
         # batch size * sequence len * features (3)
         e,pi,mu,sigma,rho = self.split_outputs(input)
 
         n = self.num_components
         e = 1/(1+torch.exp(e)).view(-1)
-        pi = self.softmax(pi).view(-1,n)
+        pi = self.softmax(pi*(1+bias)).view(-1,n)
         #pi = Variable(torch.zeros([n]).view(-1,n).cuda())
         mu = mu.contiguous().view(-1,n,2)
-        sigma = torch.exp(sigma).view(-1,n,2)
+        sigma = torch.exp(sigma-bias).view(-1,n,2)
         rho = torch.tanh(rho).view(-1,n)
         return e,pi,mu,sigma,rho
 
@@ -107,11 +107,11 @@ class GeneratorRNN(torch.nn.Module):
         self.linear = torch.nn.Linear(in_features=900,out_features=1+(1+2+2+1)*self.num_components)
         self.bgm = BivariateGaussianMixtureLayer(num_components)
 
-    def forward(self, input, hidden):
+    def forward(self, input, hidden, bias=0):
         # batch size * sequence len * features (3)
         output, hidden = self.lstm(input, hidden)
         output = self.linear(output)
-        output = self.bgm(output)
+        output = self.bgm(output, bias=bias)
         print(len(output + (hidden)))
         return output + (hidden,)
 
@@ -186,13 +186,13 @@ class ConditionedRNN(torch.nn.Module):
 
         self.softmax = torch.nn.Softmax(dim=2)
 
-    def forward(self, input, hidden, sequence):
+    def forward(self, input, hidden, sequence, bias=0):
         hidden1,hiddenw,hidden2 = hidden
         output1, hidden1 = self.lstm1(input, hidden1)
         outputw, hiddenw = self.window(output1, hiddenw, sequence)
         input2 = self.linearx2(input)+output1
         output2, hidden2 = self.lstm2(input2, hidden2)
-        outputbgm = self.bgm(output2)
+        outputbgm = self.bgm(output2, bias=bias)
         return outputbgm + ((hidden1,hiddenw,hidden2),)
 
     def init_hidden(self):
@@ -212,7 +212,10 @@ class ConditionedRNN(torch.nn.Module):
     def is_cuda(self):
         return next(self.parameters()).is_cuda
 
-def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
+def generate_sequence(rnn : GeneratorRNN,
+        length : int,
+        start=[0,0,0],
+        bias: int=0):
     """
     Generate a random sequence of handwritten strokes, with `length` strokes.
     """
@@ -224,7 +227,7 @@ def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
     strokes = np.empty([length+1,3])
     strokes[0] = start
     for i in range(1,length+1):
-        e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden)
+        e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden, bias=bias)
 
         # Sample from bivariate Gaussian mixture model
         # Choose a component
@@ -262,7 +265,7 @@ def generate_sequence(rnn : GeneratorRNN, length : int, start = [0,0,0]):
     return strokes
 
 def generate_conditioned_sequence(rnn : ConditionedRNN, length : int,
-        sentence, start = [0,0,0]):
+        sentence, start = [0,0,0], bias: int = 0):
     """
     Generate a random sequence of handwritten strokes, with `length` strokes.
     """
@@ -274,7 +277,7 @@ def generate_conditioned_sequence(rnn : ConditionedRNN, length : int,
     strokes = np.empty([length+1,3])
     strokes[0] = start
     for i in range(1,length+1):
-        e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden, sentence)
+        e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden, sentence, bias=bias)
 
         # Sample from bivariate Gaussian mixture model
         # Choose a component
@@ -399,9 +402,14 @@ def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data, sm, s
     while True:
         for strokes in tqdm(data):
             if i%50 == 0:
-                generated_strokes = generate_sequence(rnn, 700, [0,sm[1],sm[2]])
+                generated_strokes = generate_sequence(rnn, 700,
+                        [0,sm[1],sm[2]], bias=0)
                 generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-                plot_stroke(generated_strokes, 'output/%d.png'%i)
+                plot_stroke(generated_strokes, 'output/%d-0.png'%i)
+                generated_strokes = generate_sequence(rnn, 700,
+                        [0,sm[1],sm[2]], bias=10)
+                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                plot_stroke(generated_strokes, 'output/%d-10.png'%i)
             i+=1
             train(rnn, optimizer, strokes)
     return
@@ -412,9 +420,14 @@ def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, un
     pbar.update(0)
     while True:
         if i%50 == 0:
-            generated_strokes = generate_sequence(rnn, 700)
-            generated_strokes = unnorm(generated_strokes)
-            plot_stroke(generated_strokes, 'output/%d.png'%i)
+                generated_strokes = generate_sequence(rnn, 700,
+                        [0,sm[1],sm[2]], bias=0)
+                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                plot_stroke(generated_strokes, 'output2/%d-0.png'%i)
+                generated_strokes = generate_sequence(rnn, 700,
+                        [0,sm[1],sm[2]], bias=10)
+                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                plot_stroke(generated_strokes, 'output2/%d-10.png'%i)
         i+=1
         train(rnn, optimizer, strokes)
         pbar.update(1)

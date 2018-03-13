@@ -19,6 +19,10 @@ def test_no_errors():
     strokes = generate_sequence(rnn, 10)
     plot_stroke(strokes, 'strokes.png')
 
+    rnn = GeneratorRNN(20)
+    strokes = generate_sequence(rnn, 10, bias=10)
+    plot_stroke(strokes, 'strokes.png')
+
 def test_conditioned_no_errors():
     d = {'a': 0, 'b': 1, 'c': 2}
     sentence_vec = sentence_to_vectors('abc',d)
@@ -30,6 +34,10 @@ def test_conditioned_no_errors():
 
     rnn = ConditionedRNN(20,3)
     strokes = generate_conditioned_sequence(rnn, 10, sentence_vec)
+    plot_stroke(strokes, 'strokes.png')
+
+    rnn = ConditionedRNN(20,3)
+    strokes = generate_conditioned_sequence(rnn, 10, sentence_vec, bias=10)
     plot_stroke(strokes, 'strokes.png')
 
 def test_correct_distribution():
