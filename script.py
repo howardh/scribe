@@ -35,7 +35,6 @@ def sentence_to_vectors(sentence, alphabet_dict):
 
 def normalize_strokes(strokes):
     concatenated = np.concatenate(strokes)
-    print(concatenated.shape)
     m = np.mean(concatenated, axis=0)
     s = np.std(concatenated, axis=0)
     outputs = []
@@ -91,7 +90,6 @@ class BivariateGaussianMixtureLayer(torch.nn.Module):
         n = self.num_components
         e = 1/(1+torch.exp(e)).view(-1)
         pi = self.softmax(pi*(1+bias)).view(-1,n)
-        #pi = Variable(torch.zeros([n]).view(-1,n).cuda())
         mu = mu.contiguous().view(-1,n,2)
         sigma = torch.exp(sigma-bias).view(-1,n,2)
         rho = torch.tanh(rho).view(-1,n)
@@ -112,7 +110,6 @@ class GeneratorRNN(torch.nn.Module):
         output, hidden = self.lstm(input, hidden)
         output = self.linear(output)
         output = self.bgm(output, bias=bias)
-        print(len(output + (hidden)))
         return output + (hidden,)
 
     def init_hidden(self):
@@ -164,6 +161,10 @@ class WindowLayer(torch.nn.Module):
             return Variable(torch.zeros(1,1,self.num_components).cuda())
         else:
             return Variable(torch.zeros(1,1,self.num_components))
+
+    @staticmethod
+    def is_terminal(k, seq_len):
+        return (k>seq-0.5).all()
 
     def is_cuda(self):
         return next(self.parameters()).is_cuda
@@ -243,8 +244,8 @@ def generate_sequence(rnn : GeneratorRNN,
             rho = rho[0,component].data.numpy()
 
         # Sample from the selected Gaussian
-        covar = [[sigma[0]**2, rho*sigma[0]*sigma[1]],
-                [rho*sigma[0]*sigma[1], sigma[1]**2]] # See https://en.wikipedia.org/wiki/Multivariate_normal_distribution
+        covar = [[sigma[0]**2, rho[0]*sigma[0]*sigma[1]],
+                [rho[0]*sigma[0]*sigma[1], sigma[1]**2]] # See https://en.wikipedia.org/wiki/Multivariate_normal_distribution
         sample = np.random.multivariate_normal(mu,covar)
 
         # Sample from Bernoulli
@@ -320,6 +321,8 @@ def prob(x, y):
     were outputted by the neural net.
     See equation (23)
     """
+    if x.size()[0] != 1:
+        raise NotImplementedError("prob() does not yet work with multiple data points")
     e,pi,mu,sigma,rho = y
     num_components = mu.size()[1]
     p = 0
@@ -334,6 +337,8 @@ def prob(x, y):
         p *= e
     else:
         p *= (1-e)
+    if (p<=0.00000001).all():
+        p=Variable(torch.ones(p.size()).cuda(), requires_grad=False)
     return p
 
 def normal(x, mu, sigma, rho):
@@ -357,14 +362,13 @@ def compute_loss(rnn, strokes):
     strokes_var = Variable(strokes_tensor, requires_grad=False)
     hidden = rnn.init_hidden()
     total_loss = 0
-    eps = 0.00001
     for i in tqdm(range(len(strokes)-1)):
         x = strokes_var[i].view(1,1,3)
         e,pi,mu,sigma,rho,hidden = rnn(x, hidden)
         y = (e,pi,mu,sigma,rho)
         x2 = strokes_var[i+1].view(1,1,3)
 
-        loss = -torch.log(prob(x2,y)+eps)
+        loss = -torch.log(prob(x2,y))
         total_loss += loss
 
     return total_loss
@@ -402,32 +406,30 @@ def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data, sm, s
     while True:
         for strokes in tqdm(data):
             if i%50 == 0:
-                generated_strokes = generate_sequence(rnn, 700,
-                        [0,sm[1],sm[2]], bias=0)
-                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-                plot_stroke(generated_strokes, 'output/%d-0.png'%i)
-                generated_strokes = generate_sequence(rnn, 700,
-                        [0,sm[1],sm[2]], bias=10)
-                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-                plot_stroke(generated_strokes, 'output/%d-10.png'%i)
+                for b in [0,0.1,10]:
+                    generated_strokes = generate_sequence(rnn, 700,
+                            [0,sm[1],sm[2]], bias=b)
+                    generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                    file_name = 'output/%d-%s.png'%(i,b)
+                    plot_stroke(generated_strokes, file_name)
+                    tqdm.write('Writing file: %s' % file_name)
             i+=1
             train(rnn, optimizer, strokes)
     return
 
-def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, unnorm):
+def train_one(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes, sm, ss):
     i = 0
     pbar = tqdm()
     pbar.update(0)
     while True:
         if i%50 == 0:
-                generated_strokes = generate_sequence(rnn, 700,
-                        [0,sm[1],sm[2]], bias=0)
-                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-                plot_stroke(generated_strokes, 'output2/%d-0.png'%i)
-                generated_strokes = generate_sequence(rnn, 700,
-                        [0,sm[1],sm[2]], bias=10)
-                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-                plot_stroke(generated_strokes, 'output2/%d-10.png'%i)
+                for b in [0,0.1,10]:
+                    generated_strokes = generate_sequence(rnn, 700,
+                            [0,sm[1],sm[2]], bias=b)
+                    generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                    file_name = 'output/%d-%s.png'%(i,b)
+                    plot_stroke(generated_strokes, file_name)
+                    tqdm.write('Writing file: %s' % file_name)
         i+=1
         train(rnn, optimizer, strokes)
         pbar.update(1)
@@ -448,32 +450,19 @@ def train_all_conditioned(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer,
     while True:
         for strokes, sentence in tqdm(zip(data, sentences)):
             if target_sentence is not None and i%50 == 0:
-                generated_strokes = generate_conditioned_sequence(rnn, 700,
-                        target_sentence, [0,sm[1],sm[2]])
-                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-                plot_stroke(generated_strokes, 'output_cond/%d.png'%i)
-                torch.save(rnn.state_dict(), "models_cond/%d.pt"%i)
+                for b in [0,0.1,10]:
+                    generated_strokes = generate_conditioned_sequence(rnn, 700,
+                            target_sentence, [0,sm[1],sm[2]], bias=b)
+                    generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                    file_name = 'output_cond/%d-%s.png'%(i,b)
+                    plot_stroke(generated_strokes, file_name)
+                    tqdm.write('Writing file: %s' % file_name)
+                    torch.save(rnn.state_dict(), "models_cond/%d.pt"%i)
             i+=1
             train_conditioned(rnn, optimizer, strokes, sentence)
     return
 
-def foo():
-    # Check what plot thing does
-    x = np.array([[0,0,0],[0,1,1],[0,1,0],[0,1,1],[1,0,0]])
-    plot_stroke(x,'test.png')
-
-if __name__=='__main__':
-    data = load_data()
-    normalized_data,m,s = normalize_strokes(data)
-    sentences = load_sentences()
-    alphabet, alphabet_dict = compute_alphabet(sentences)
-    sentence_vars = [Variable(torch.from_numpy(sentence_to_vectors(s,alphabet_dict)).float().cuda(),
-        requires_grad=False) for s in tqdm(sentences,desc="Converting Sentences")]
-    #rnn = GeneratorRNN(20)
-    rnn = ConditionedRNN(20, len(alphabet))
-    rnn.cuda()
-    #rnn.load_state_dict(torch.load('model.pt'))
-
+def create_optimizer(rnn):
     # Paper says they're using RMSProp, but the equations (38)-(41) look like Adam with momentum.
     # See parameters in equation (42)-(45)
     # Reference https://en.wikipedia.org/wiki/Stochastic_gradient_descent#Adam
@@ -486,9 +475,24 @@ if __name__=='__main__':
     optimizer = torch.optim.Adam(params=rnn.parameters(),lr=0.0001,betas=(0.95,0.95),eps=0.0001)
     #optimizer = torch.optim.RMSprop(params=rnn.parameters(),lr=0.0001,alpha=0.95,eps=0.0001)
     #optimizer = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
+    return optimizer
+
+if __name__=='__main__':
+    data = load_data()
+    normalized_data,m,s = normalize_strokes(data)
+    sentences = load_sentences()
+    alphabet, alphabet_dict = compute_alphabet(sentences)
+    sentence_vars = [Variable(torch.from_numpy(sentence_to_vectors(s,alphabet_dict)).float().cuda(),
+        requires_grad=False) for s in tqdm(sentences,desc="Converting Sentences")]
+    #rnn = GeneratorRNN(20).cuda()
+    rnn = ConditionedRNN(20, len(alphabet)).cuda()
+    #rnn.load_state_dict(torch.load('model-all.pt'))
+    rnn.load_state_dict(torch.load('models_cond/4850.pt'))
+
+    optimizer = create_optimizer(rnn)
 
     #train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
-    #train_one(rnn, optimizer, normalized_data[0], lambda strokes: unnormalize_strokes(strokes,m,s))
+    #train_one(rnn, optimizer, normalized_data[0], m.tolist(), s.tolist())
     #train(rnn, optimizer, normalized_data[0])
 
     target_sentence = Variable(torch.from_numpy(sentence_to_vectors("Hello World!",alphabet_dict)).float().cuda(), requires_grad=False)

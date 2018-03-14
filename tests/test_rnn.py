@@ -3,32 +3,6 @@ import torch
 from torch.autograd import Variable
 
 from script import GeneratorRNN
-from script import BivariateGaussianMixtureLayer
-
-def test_split_outputs_all_unique():
-    """
-    Check that split_outputs() separates everything properly and no output is
-    accidentally used for multiple purposes.
-    """
-    bgm= BivariateGaussianMixtureLayer(1)
-    outputs = Variable(torch.from_numpy(np.array(range(7))).view(1,-1,7))
-    split = bgm.split_outputs(outputs)
-    all_vals = []
-    for s in split:
-        all_vals += s.data.view(-1).numpy().tolist()
-    assert len(all_vals)==7
-    all_vals = set(all_vals)
-    assert len(all_vals)==7
-
-    bgm = BivariateGaussianMixtureLayer(2)
-    outputs = Variable(torch.from_numpy(np.array(range(1+6*2))).view(1,-1,1+6*2))
-    split = bgm.split_outputs(outputs)
-    all_vals = []
-    for s in split:
-        all_vals += s.data.view(-1).numpy().tolist()
-    assert len(all_vals)==1+6*2
-    all_vals = set(all_vals)
-    assert len(all_vals)==1+6*2
 
 def test_forward_no_errors():
     """
