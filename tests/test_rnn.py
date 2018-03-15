@@ -28,32 +28,25 @@ def test_forward_values():
     hidden = rnn.init_hidden()
     e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
 
-    e = e.data.numpy()
-    assert e >= 0
-    assert e <= 1
+    assert (e >= 0).all()
+    assert (e <= 1).all()
 
-    pi = pi.data.numpy()
-    pi_sum = np.sum(pi)
-    diff = np.abs(1-pi_sum)
-    assert diff < 0.00001
+    diff = torch.abs(1-torch.sum(pi))
+    assert (diff < 0.00001).all()
 
-    sigma = sigma.view(-1).data.numpy()
-    for s in sigma:
-        assert s > 0
+    assert (sigma > 0).all()
 
-    rho = rho.data.numpy()
-    assert rho > -1
-    assert rho < 1
+    assert (rho > -1).all()
+    assert (rho < 1).all()
 
     rnn = GeneratorRNN(3)
     inputs = Variable(torch.zeros(10,1,3))
     hidden = rnn.init_hidden()
     e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
 
-    pi = pi.data.numpy()
-    pi_sum = np.sum(pi,axis=1)
-    diff = np.sum(np.abs(1-pi_sum))
-    assert diff < 0.00001
+    pi_sum = torch.sum(pi,dim=2)
+    diff = torch.abs(1-pi_sum)
+    assert (diff < 0.00001).all()
 
 def test_forward():
     rnn = GeneratorRNN(1)
@@ -67,18 +60,30 @@ def test_forward():
     e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
 
 def test_forward_batch():
-    rnn = GeneratorRNN(1)
-    seq_len = 1
+    rnn = GeneratorRNN(7)
+    seq_len = 5
     batch_len = 2
     features = 3
-    inputs = Variable(torch.zeros(seq_len, batch_len, features))
-    hidden = rnn.init_hidden()
-    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
-    print(mu)
+    strokes1 = Variable(torch.arange(seq_len*features).view(seq_len, 1, features))
+    strokes2 = Variable(torch.arange(seq_len*features).view(seq_len, 1, features))
+    strokes3 = Variable(torch.zeros([seq_len, batch_len, features]))
+    strokes3.data[:,0,:] = strokes1.data[:,0,:]
+    strokes3.data[:,1,:] = strokes1.data[:,0,:]
 
-    inputs = Variable(torch.zeros(1,1,3))
-    hidden = rnn.init_hidden()
-    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden)
-    print(mu)
-    #assert False
-    #TODO: Assert that the values from the batch and non-batch forward call are the same
+    hidden = rnn.init_hidden(2)
+    e2,pi2,mu2,sigma2,rho2,_ = rnn(strokes3, hidden)
+
+    hidden = rnn.init_hidden(1)
+    e1,pi1,mu1,sigma1,rho1,_ = rnn(strokes1, hidden)
+
+    diff = torch.abs(e1-e2)
+    assert (diff < 0.000001).all()
+    diff = torch.abs(pi1-pi2)
+    assert (diff < 0.000001).all()
+    diff = torch.abs(mu1-mu2)
+    assert (diff < 0.000001).all()
+    diff = torch.abs(sigma1-sigma2)
+    assert (diff < 0.000001).all()
+    diff = torch.abs(rho1-rho2)
+    assert (diff < 0.000001).all()
+

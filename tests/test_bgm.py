@@ -36,12 +36,12 @@ def test_1comp():
 
     assert (e==1/2).all()
     assert (pi.size()[1] == 1)
-    assert (pi[0,0]==1).all()
-    assert (mu[0,0,0]==2).all(), "%s != 2"%mu[0,0,0]
-    assert (mu[0,0,1]==3).all()
-    assert (sigma[0,0,0]==np.exp(4)).all()
-    assert (sigma[0,0,1]==np.exp(5)).all()
-    assert (rho[0,0]==np.tanh(6)).all()
+    assert (pi[0,0,0]==1).all()
+    assert (mu[0,0,0,0]==2).all(), "%s != 2"%mu[0,0,0,0]
+    assert (mu[0,0,0,1]==3).all()
+    assert (sigma[0,0,0,0]==np.exp(4)).all()
+    assert (sigma[0,0,0,1]==np.exp(5)).all()
+    assert (rho[0,0,0]==np.tanh(6)).all()
 
 def test_2comp():
     bgm = BivariateGaussianMixtureLayer(2)
@@ -50,21 +50,21 @@ def test_2comp():
 
     assert (e==1/2).all()
 
-    assert (pi.size()[1] == 2)
+    assert (pi.size()[2] == 2)
     expected_pi = np.exp(1)/(np.exp(1)+np.exp(2))
-    assert (pi[0,0]==expected_pi).all(), "%s != %s"%(pi[0,0],expected_pi)
+    assert (pi[0,0,0]==expected_pi).all(), "%s != %s"%(pi[0,0,0],expected_pi)
     expected_pi = np.exp(2)/(np.exp(1)+np.exp(2))
-    assert (pi[0,1]==expected_pi).all(), "%s != %s"%(pi[0,1],expected_pi)
+    assert (pi[0,0,1]==expected_pi).all(), "%s != %s"%(pi[0,0,1],expected_pi)
 
-    assert (mu[0,0,0]==3).all(), "%s != 3"%mu[0,0,0]
-    assert (mu[0,0,1]==4).all(), "%s != 4"%mu[0,0,1]
-    assert (mu[0,1,0]==5).all(), "%s != 5"%mu[0,1,0]
-    assert (mu[0,1,1]==6).all(), "%s != 6"%mu[0,1,1]
+    assert (mu[0,0,0,0]==3).all(), "%s != 3"%mu[0,0,0,0]
+    assert (mu[0,0,0,1]==4).all(), "%s != 4"%mu[0,0,0,1]
+    assert (mu[0,0,1,0]==5).all(), "%s != 5"%mu[0,0,1,0]
+    assert (mu[0,0,1,1]==6).all(), "%s != 6"%mu[0,0,1,1]
 
-    assert (sigma[0,0,0]==np.exp(7)).all()
-    assert (sigma[0,0,1]==np.exp(8)).all()
-    assert (sigma[0,1,0]==np.exp(9)).all()
-    assert (sigma[0,1,1]==np.exp(10)).all()
+    assert (sigma[0,0,0,0]==np.exp(7)).all()
+    assert (sigma[0,0,0,1]==np.exp(8)).all()
+    assert (sigma[0,0,1,0]==np.exp(9)).all()
+    assert (sigma[0,0,1,1]==np.exp(10)).all()
 
-    assert (rho[0,0]==np.tanh(11)).all()
-    assert (rho[0,1]==np.tanh(12)).all()
+    assert (rho[0,0,0]==np.tanh(11)).all()
+    assert (rho[0,0,1]==np.tanh(12)).all()

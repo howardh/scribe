@@ -27,7 +27,7 @@ def test_no_errors():
 
 def test_conditioned_no_errors():
     d = {'a': 0, 'b': 1, 'c': 2}
-    sentence_vec = sentence_to_vectors('abc',d)
+    sentence_vec = sentence_to_vectors('abcabc',d)
     sentence_vec = Variable(torch.from_numpy(sentence_vec).float(), requires_grad=False)
 
     rnn = ConditionedRNN(1,3)
@@ -82,4 +82,4 @@ def test_fixed_distribution():
     hidden = rnn.init_hidden()
     e,pi,mu,sigma,rho,hidden = rnn(inputs,hidden)
     print(e,pi,mu,sigma,rho)
-    assert False
+    #assert False

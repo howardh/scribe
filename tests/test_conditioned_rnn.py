@@ -42,7 +42,7 @@ def test_forward_values():
     seq = Variable(torch.zeros([10,3]))
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
-    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden, seq)
+    e,pi,mu,sigma,rho,_,_ = rnn(inputs, hidden, seq)
 
     e = e.data.numpy()
     assert e >= 0
@@ -65,25 +65,24 @@ def test_forward_values():
     seq = Variable(torch.zeros([10,3]))
     inputs = Variable(torch.zeros(10,1,3))
     hidden = rnn.init_hidden()
-    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden, seq)
+    e,pi,mu,sigma,rho,_,_ = rnn(inputs, hidden, seq)
 
-    pi = pi.data.numpy()
-    pi_sum = np.sum(pi,axis=1)
-    diff = np.sum(np.abs(1-pi_sum))
-    assert diff < 0.00001
+    pi_sum = torch.sum(pi,dim=2)
+    diff = torch.abs(1-pi_sum)
+    assert (diff < 0.00001).all()
 
 def test_forward():
     rnn = ConditionedRNN(1,3)
     seq = Variable(torch.zeros([10,3]))
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
-    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden, seq)
+    e,pi,mu,sigma,rho,_,_ = rnn(inputs, hidden, seq)
 
     rnn = ConditionedRNN(3,3)
     seq = Variable(torch.zeros([10,3]))
     inputs = Variable(torch.zeros(10,1,3))
     hidden = rnn.init_hidden()
-    e,pi,mu,sigma,rho,_ = rnn(inputs, hidden, seq)
+    e,pi,mu,sigma,rho,_,_ = rnn(inputs, hidden, seq)
 
 def test_forward_batch():
     rnn = ConditionedRNN(1,3)
@@ -93,15 +92,14 @@ def test_forward_batch():
     features = 3
     inputs = Variable(torch.zeros(seq_len, batch_len, features))
     hidden = rnn.init_hidden()
-    e1,pi1,mu1,sigma1,rho1,_ = rnn(inputs, hidden, seq)
+    e1,pi1,mu1,sigma1,rho1,_,_ = rnn(inputs, hidden, seq)
 
     inputs = Variable(torch.zeros(seq_len, 1, features))
     hidden = rnn.init_hidden()
-    e2,pi2,mu2,sigma2,rho2,_ = rnn(inputs, hidden, seq)
+    e2,pi2,mu2,sigma2,rho2,_,_ = rnn(inputs, hidden, seq)
 
-    diff = e1-e2
-    diff = np.sum(np.abs(diff.data.numpy()))
-    assert diff < 0.00001
+    diff = torch.abs(e1-e2)
+    assert (diff < 0.00001).all()
 
     diff = mu1-mu2
     diff = np.sum(np.abs(diff.data.numpy()))
