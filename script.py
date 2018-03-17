@@ -257,14 +257,10 @@ class ConditionedRNN(torch.nn.Module):
     def forward(self, input, hidden, sequence, bias=0):
         hidden1,hiddenw,outputw,hidden2 = hidden
 
-        print('input ', input.size())
         input1 = self.linearx1(input)+self.linearw1(outputw)
-        print('input1 ', input1.size())
         output1, hidden1 = self.lstm1(input1, hidden1)
-        print('output1 ', output1.size())
 
         outputw, hiddenw, terminal = self.window(output1, hiddenw, sequence)
-        print('outputw ', outputw.size())
 
         input2 = self.linearx2(input)+self.linear12(output1)+self.linearw2(outputw)
         output2, hidden2 = self.lstm2(input2, hidden2)
@@ -495,8 +491,6 @@ def compute_loss(rnn, strokes, mask=None):
         likelihood = likelihood[(likelihood > 0.00000001).detach()]
         loss = -torch.log(likelihood)
         if (loss==0).all():
-            #print('likelihood ', llh)
-            #print('loss ', loss)
             continue
         if not mask[i,:].all():
             total_loss2 += torch.sum(loss)
@@ -519,6 +513,7 @@ def compute_loss_conditioned(rnn, strokes, sentence, mask=None):
     strokes_var = Variable(strokes_tensor, requires_grad=False)
     hidden = rnn.init_hidden(batch_size)
     total_loss = 0
+    total_loss2 = 0
     for i in tqdm(range(len(strokes)-1)):
         x = strokes_var[i].view(1,-1,3)
         e,pi,mu,sigma,rho,hidden,_ = rnn(x, hidden, sentence)
@@ -526,17 +521,20 @@ def compute_loss_conditioned(rnn, strokes, sentence, mask=None):
         x2 = strokes_var[i+1].view(1,-1,3)
 
         likelihood = torch.masked_select(prob(x2,y),mask[i,:])
-        llh = likelihood
         likelihood = likelihood[(likelihood > 0.00000001).detach()]
         loss = -torch.log(likelihood)
         if (loss==0).all():
             continue
-        total_loss += torch.sum(loss)
+        if not mask[i,:].all():
+            total_loss2 += torch.sum(loss)
+        else:
+            total_loss += torch.sum(loss)
 
-    return total_loss
+    return total_loss, total_loss2
 
 def train(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
     total_loss = compute_loss(rnn, strokes)
+    total_loss = total_loss[0]
 
     optimizer.zero_grad()
     tqdm.write("Loss: %s" % (total_loss.data[0]/len(strokes)))
@@ -551,12 +549,12 @@ def train_batch(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
         mask = Variable(torch.from_numpy(mask).byte().cuda(), requires_grad=False)
     else:
         mask = Variable(torch.from_numpy(mask).byte(), requires_grad=False)
-    total_loss, tl2 = compute_loss(rnn, batched_strokes, mask)
+    total_loss = compute_loss(rnn, batched_strokes, mask)
 
     optimizer.zero_grad()
     if type(total_loss) is not int:
-        tqdm.write("Loss: %s" % (total_loss.data[0]/len(strokes)))
-        total_loss.backward(retain_graph=True)
+        tqdm.write("Loss: %s" % (total_loss[0].data[0]/len(strokes)))
+        total_loss[0].backward(retain_graph=True)
         g = print_avg_grad(rnn)
         if g != g:
             tqdm.write("Skipping batch")
@@ -566,7 +564,7 @@ def train_batch(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, strokes):
         optimizer.step()
 
         optimizer.zero_grad()
-        tl2.backward()
+        total_loss[1].backward()
         g = print_avg_grad(rnn)
         if g != g:
             tqdm.write("Skipping batch tail")
@@ -599,11 +597,8 @@ def train_all_random_batch(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer
     i = 0
     pbar = tqdm()
     while True:
-        #batched_data = np.random.choice(data,size=batch_size,replace=False)
         index = np.random.choice(range(len(data)-batch_size),size=1)[0]
-        #tqdm.write("index %d" % index)
         batched_data = data[index:(index+batch_size)]
-        #tqdm.write("%s" % [len(d) for d in batched_data])
         if i%50 == 0:
             for b in [0,0.1,1,5]:
                 generated_strokes = generate_sequence(rnn, 500,
@@ -658,13 +653,32 @@ def train_batch_conditioned(rnn : ConditionedRNN, optimizer : torch.optim.Optimi
     total_loss = compute_loss_conditioned(rnn, batched_strokes, batched_sentences, mask)
 
     optimizer.zero_grad()
-    if type(total_loss) is not int:
-        tqdm.write("Loss: %s" % (total_loss.data[0]/len(strokes)))
-        total_loss.backward()
+    if type(total_loss[0]) is not int:
+        tqdm.write("Loss: %s" % (total_loss[0].data[0]/len(strokes)))
+        total_loss[0].backward(retain_graph=True)
+        g = print_avg_grad(rnn)
+        if g != g:
+            tqdm.write("Skipping batch")
+            return
+        torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
+        print_avg_grad(rnn)
+        optimizer.step()
     else:
         tqdm.write("Something's wrong.")
-    torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
-    optimizer.step()
+        return
+    if type(total_loss[1]) is not int:
+        optimizer.zero_grad()
+        total_loss[1].backward()
+        g = print_avg_grad(rnn)
+        if g != g:
+            tqdm.write("Skipping batch tail")
+            return
+        torch.nn.utils.clip_grad.clip_grad_norm(rnn.parameters(), 10)
+        print_avg_grad(rnn)
+        optimizer.step()
+    else:
+        tqdm.write("No tail")
+        return
 
 def train_all_conditioned(rnn : ConditionedRNN, optimizer : torch.optim.Optimizer, data, sentences, sm, ss, target_sentence=None):
     i = 0
@@ -689,18 +703,21 @@ def train_all_random_batch_conditioned(rnn : ConditionedRNN, optimizer : torch.o
     i = 0
     pbar = tqdm()
     while True:
-        sampled_indices = np.random.choice(range(len(sentences)),size=batch_size,replace=False)
-        batched_data = [data[i] for i in sampled_indices]
-        batched_sentences = [sentences[i] for i in sampled_indices]
-        #if i%50 == 0:
-        #    for b in [0,0.1,5,10]:
-        #            generated_strokes = generate_conditioned_sequence(rnn, 700,
-        #                    target_sentence, [0,sm[1],sm[2]], bias=b)
-        #            generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
-        #            file_name = 'output_cond_batch/%d-%s.png'%(i,b)
-        #            plot_stroke(generated_strokes, file_name)
-        #            tqdm.write('Writing file: %s' % file_name)
-        #            torch.save(rnn.state_dict(), "models_cond_batch/%d.pt"%i)
+        index = np.random.choice(range(len(data)-batch_size),size=1)[0]
+        batched_data = data[index:(index+batch_size)]
+        batched_sentences = sentences[index:(index+batch_size)]
+        #sampled_indices = np.random.choice(range(len(sentences)),size=batch_size,replace=False)
+        #batched_data = [data[i] for i in sampled_indices]
+        #batched_sentences = [sentences[i] for i in sampled_indices]
+        if i%50 == 0:
+            for b in [0,0.1,1,5]:
+                generated_strokes = generate_conditioned_sequence(rnn, 700,
+                        target_sentence, [0,sm[1],sm[2]], bias=b)
+                generated_strokes = unnormalize_strokes(generated_strokes, sm, ss)
+                file_name = 'output_cond_batch/%d-%s.png'%(i,b)
+                plot_stroke(generated_strokes, file_name)
+                tqdm.write('Writing file: %s' % file_name)
+            torch.save(rnn.state_dict(), "models_cond_batch/%d.pt"%i)
         i+=1
         train_batch_conditioned(rnn, optimizer, batched_data, batched_sentences)
         pbar.update(1)
@@ -744,17 +761,20 @@ def printgradnorm(self, grad_input, grad_output):
 
 if __name__=='__main__':
     data = load_data()
-    data = sorted(data, key=lambda a: a.shape[0])
+    sorted_indices = np.argsort([len(d) for d in data])
+
+    data = [data[i] for i in sorted_indices]
     normalized_data,m,s = normalize_strokes(data)
-    #sentences = load_sentences()
-    #alphabet, alphabet_dict = compute_alphabet(sentences)
-    #sentence_vars = [Variable(torch.from_numpy(sentence_to_vectors(s,alphabet_dict)).float().cuda(),
-    #    requires_grad=False) for s in tqdm(sentences,desc="Converting Sentences")]
-    rnn = GeneratorRNN(20).cuda()
+    sentences = load_sentences()
+    sentences = [sentences[i] for i in sorted_indices]
+    alphabet, alphabet_dict = compute_alphabet(sentences)
+    sentence_vars = [Variable(torch.from_numpy(sentence_to_vectors(s,alphabet_dict)).float().cuda(),
+        requires_grad=False) for s in tqdm(sentences,desc="Converting Sentences")]
+    #rnn = GeneratorRNN(20).cuda()
     #rnn.lstm.register_backward_hook(printgradnorm)
     #rnn.linear.register_backward_hook(printgradnorm)
     #rnn.bgm.register_backward_hook(printgradnorm)
-    #rnn = ConditionedRNN(20, len(alphabet)).cuda()
+    rnn = ConditionedRNN(20, len(alphabet)).cuda()
     #rnn.load_state_dict(torch.load('model-all.pt'))
     #rnn.load_state_dict(torch.load('models_cond/1550.pt'))
 
@@ -763,11 +783,11 @@ if __name__=='__main__':
     #train_all(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
     #train_one(rnn, optimizer, normalized_data[0], m.tolist(), s.tolist())
     #train(rnn, optimizer, normalized_data[0])
-    train_all_random_batch(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
+    #train_all_random_batch(rnn, optimizer, normalized_data, m.tolist(), s.tolist())
 
-    #target_sentence = Variable(torch.from_numpy(sentence_to_vectors("Hello World!",alphabet_dict)).float().cuda(), requires_grad=False)
+    target_sentence = Variable(torch.from_numpy(sentence_to_vectors("Hello World!",alphabet_dict)).float().cuda(), requires_grad=False)
     #train_all_conditioned(rnn, optimizer, normalized_data, sentence_vars, m.tolist(),
     #        s.tolist(), target_sentence=target_sentence)
     #train_conditioned(rnn, optimizer, normalized_data[0], sentence_vars[0])
-    #train_all_random_batch_conditioned(rnn, optimizer, normalized_data, sentence_vars, m.tolist(),
-    #        s.tolist(), target_sentence=target_sentence)
+    train_all_random_batch_conditioned(rnn, optimizer, normalized_data, sentence_vars, m.tolist(),
+            s.tolist(), target_sentence=target_sentence)

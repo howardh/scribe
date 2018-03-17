@@ -145,6 +145,9 @@ def test_compute_loss_batch():
     loss1 = compute_loss(rnn, strokes1)
     loss2 = compute_loss(rnn, strokes2)
     loss3 = compute_loss(rnn, strokes3)
+    loss1 = loss1[0]+loss1[1]
+    loss2 = loss2[0]+loss2[1]
+    loss3 = loss3[0]+loss3[1]
     print(loss1)
     print(loss2)
     print(loss3)
@@ -171,6 +174,9 @@ def test_compute_loss_batch_different_length():
     loss1 = compute_loss(rnn, strokes1)
     loss2 = compute_loss(rnn, strokes2)
     loss3 = compute_loss(rnn, strokes3, mask)
+    loss1 = loss1[0]+loss1[1]
+    loss2 = loss2[0]+loss2[1]
+    loss3 = loss3[0]+loss3[1]
     print(loss1)
     print(loss2)
     print(loss3)
