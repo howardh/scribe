@@ -2,8 +2,8 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 
-from script import ConditionedRNN
-from script import WindowLayer
+from models import ConditionedRNN
+from models import WindowLayer
 
 def test_window_forward_no_errors():
     window = WindowLayer(10,10,1,3)

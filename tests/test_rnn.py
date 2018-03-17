@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 
-from script import GeneratorRNN
+from models import GeneratorRNN
 
 def test_forward_no_errors():
     """

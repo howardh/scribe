@@ -3,13 +3,13 @@ import torch
 from torch.autograd import Variable
 from unittest.mock import MagicMock
 
-from script import sentence_to_vectors
-from script import GeneratorRNN
-from script import generate_sequence
-from script import ConditionedRNN
-from script import generate_conditioned_sequence
-from script import compute_loss
-from script import BivariateGaussianMixtureLayer
+from data import sentence_to_vectors
+from models import GeneratorRNN
+from models import ConditionedRNN
+from models import BivariateGaussianMixtureLayer
+from generator import generate_sequence
+from generator import generate_conditioned_sequence
+from training import unconditioned
 from utils import plot_stroke
 
 def test_no_errors():
@@ -59,10 +59,10 @@ def test_correct_distribution():
     rnn2 = GeneratorRNN(1)
     strokes1 = generate_sequence(rnn1, 20, bias=10000)
     strokes2 = generate_sequence(rnn2, 20, bias=10000)
-    loss11 = compute_loss(rnn1, strokes1)
-    loss22 = compute_loss(rnn2, strokes2)
-    loss12 = compute_loss(rnn1, strokes2)
-    loss21 = compute_loss(rnn2, strokes1)
+    loss11 = unconditioned.compute_loss(rnn1, strokes1)
+    loss22 = unconditioned.compute_loss(rnn2, strokes2)
+    loss12 = unconditioned.compute_loss(rnn1, strokes2)
+    loss21 = unconditioned.compute_loss(rnn2, strokes1)
     print("loss11", loss11)
     print("loss21", loss21)
     print("loss22", loss22)

@@ -1,7 +1,7 @@
 import numpy as np
 
-from script import normalize_strokes
-from script import unnormalize_strokes
+from data import normalize_strokes
+from data import unnormalize_strokes
 
 def test_normalize():
     strokes = [np.array([

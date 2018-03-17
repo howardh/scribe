@@ -2,16 +2,16 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 
-from script import BivariateGaussianMixtureLayer
+from models import SplitBGMInputFunction 
+from models import BivariateGaussianMixtureLayer
 
 def test_split_outputs_all_unique():
     """
     Check that split_outputs() separates everything properly and no output is
     accidentally used for multiple purposes.
     """
-    bgm= BivariateGaussianMixtureLayer(1)
     outputs = Variable(torch.from_numpy(np.array(range(7))).view(1,-1,7))
-    split = bgm.split_outputs(outputs)
+    split = SplitBGMInputFunction.apply(outputs)
     all_vals = []
     for s in split:
         all_vals += s.data.view(-1).numpy().tolist()
@@ -21,7 +21,7 @@ def test_split_outputs_all_unique():
 
     bgm = BivariateGaussianMixtureLayer(2)
     outputs = Variable(torch.from_numpy(np.array(range(1+6*2))).view(1,-1,1+6*2))
-    split = bgm.split_outputs(outputs)
+    split = SplitBGMInputFunction.apply(outputs)
     all_vals = []
     for s in split:
         all_vals += s.data.view(-1).numpy().tolist()

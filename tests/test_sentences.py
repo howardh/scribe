@@ -1,7 +1,7 @@
 import numpy as np
 
-from script import compute_alphabet
-from script import sentence_to_vectors
+from data import compute_alphabet
+from data import sentence_to_vectors
 
 def test_compute_alphabet():
     sentence = 'abc'

@@ -2,12 +2,13 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 
-from script import GeneratorRNN
-from script import prob
-from script import normal
-from script import train
-from script import compute_loss
-from script import batch
+from models import GeneratorRNN
+import training
+from training import prob
+from training import normal
+from training.unconditioned import train
+from training.unconditioned import compute_loss
+from data import batch
 
 def test_prob_size():
     rnn = GeneratorRNN(1)
