@@ -16,6 +16,7 @@ def test_train():
     d = {'a': 0, 'b': 1, 'c': 2}
     sentence_vec = sentence_to_vectors('abc',d)
     sentence_vec = Variable(torch.from_numpy(sentence_vec).float(), requires_grad=False)
+    sentence_vec = sentence_vec.view(1,3,3)
     rnn = ConditionedRNN(1, len(d))
     opt = torch.optim.SGD(params=rnn.parameters(),lr=0.0001)
     strokes = np.array([[[0,0,0]],[[0,1,1]],[[1,2,2]]])
