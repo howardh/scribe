@@ -59,10 +59,13 @@ class BivariateGaussianMixtureLayer(torch.nn.Module):
         return e,pi,mu,sigma,rho
 
 class GeneratorRNN(torch.nn.Module):
-    def __init__(self, num_components=1):
+    def __init__(self, num_components=1, mean=[0,0], std=[1,1]):
         super(GeneratorRNN,self).__init__()
-        # See page 23 for parameters
+
         self.num_components = num_components
+        self.mean = mean
+        self.std = std
+
         self.lstm = torch.nn.LSTM(input_size=3, hidden_size=900, num_layers=1,
                 bias=True)
         self.linear = torch.nn.Linear(in_features=900,out_features=1+(1+2+2+1)*self.num_components)
@@ -138,12 +141,14 @@ class WindowLayer(torch.nn.Module):
         return next(self.parameters()).is_cuda
 
 class ConditionedRNN(torch.nn.Module):
-    def __init__(self, num_components=1, num_chars=27):
+    def __init__(self, num_components=1, mean=[0,0], std=[1,1], num_chars=None):
         super(ConditionedRNN,self).__init__()
         # See page 23 for parameters
         self.num_chars = num_chars
         self.num_components = num_components
         self.hidden_size = 400
+        self.mean = mean
+        self.std = std
         
         self.lstm1 = torch.nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size,
                 num_layers=1, bias=True)

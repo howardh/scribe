@@ -9,18 +9,18 @@ from models import ConditionedRNN
 
 def generate_sequence(rnn : GeneratorRNN,
         length : int,
-        start=[0,0,0],
         bias: int=0):
     """
     Generate a random sequence of handwritten strokes, with `length` strokes.
     """
+    start = [0,rnn.mean[0],rnn.mean[1]]
     if rnn.is_cuda():
         inputs = Variable(torch.Tensor(start).view(1,1,3).float().cuda())
     else:
         inputs = Variable(torch.Tensor(start).view(1,1,3).float())
     hidden = rnn.init_hidden()
     strokes = np.empty([length+1,3])
-    strokes[0] = start
+    strokes[0] = [0]+rnn.mean
     for i in range(1,length+1):
         e,pi,mu,sigma,rho,hidden = rnn.forward(inputs, hidden, bias=bias)
 
@@ -60,17 +60,18 @@ def generate_sequence(rnn : GeneratorRNN,
     return strokes
 
 def generate_conditioned_sequence(rnn : ConditionedRNN, length : int,
-        sentence, start = [0,0,0], bias: int = 0):
+        sentence, bias: int = 0):
     """
     Generate a sequence of handwritten strokes representing the given sentence, with at most `length` strokes.
     """
+    start = [0,rnn.mean[0],rnn.mean[1]]
     if rnn.is_cuda():
         inputs = Variable(torch.Tensor(start).view(1,1,3).float().cuda())
     else:
         inputs = Variable(torch.Tensor(start).view(1,1,3).float())
     hidden = rnn.init_hidden()
     strokes = np.empty([length+1,3])
-    strokes[0] = start
+    strokes[0] = [0]+rnn.mean
     terminal = False
     sentence = sentence.view(1,sentence.size()[0],sentence.size()[1])
     for i in range(1,length+1):

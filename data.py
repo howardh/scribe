@@ -44,14 +44,14 @@ def normalize_strokes(strokes):
             output[i][1] = (stroke[i][1]-m[1])/s[1]
             output[i][2] = (stroke[i][2]-m[2])/s[2]
         outputs.append(output)
-    return outputs, m, s
+    return outputs, m[1:], s[1:]
 
 def unnormalize_strokes(strokes, m, s):
     output = np.empty(strokes.shape)
     for i in range(len(strokes)):
         output[i][0] = strokes[i][0]
-        output[i][1] = strokes[i][1]*s[1]+m[1]
-        output[i][2] = strokes[i][2]*s[2]+m[2]
+        output[i][1] = strokes[i][1]*s[0]+m[0]
+        output[i][2] = strokes[i][2]*s[1]+m[1]
     return output
 
 def batch(strokes):

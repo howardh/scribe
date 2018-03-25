@@ -48,12 +48,12 @@ def test_forward_no_errors():
     Check that the forward pass works without error
     """
     seq = Variable(torch.zeros([1,10,3]))
-    rnn = ConditionedRNN(1,3)
+    rnn = ConditionedRNN(1,num_chars=3)
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
     rnn(inputs, hidden, seq)
 
-    rnn = ConditionedRNN(20,3)
+    rnn = ConditionedRNN(20,num_chars=3)
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
     rnn(inputs, hidden, seq)
@@ -65,7 +65,7 @@ def test_forward_values():
     """
     n_components = 1
     alpha_size = 3
-    rnn = ConditionedRNN(n_components,alpha_size)
+    rnn = ConditionedRNN(n_components,num_chars=alpha_size)
     seq = Variable(torch.zeros([1,10,3]))
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
@@ -82,7 +82,7 @@ def test_forward_values():
     assert (rho > -1).all()
     assert (rho < 1).all()
 
-    rnn = ConditionedRNN(3,3)
+    rnn = ConditionedRNN(3,num_chars=3)
     seq = Variable(torch.zeros([1,10,3]))
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
@@ -93,13 +93,13 @@ def test_forward_values():
     assert (diff < 0.00001).all()
 
 def test_forward():
-    rnn = ConditionedRNN(1,3)
+    rnn = ConditionedRNN(1,num_chars=3)
     seq = Variable(torch.zeros([1,10,3]))
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
     e,pi,mu,sigma,rho,_,_ = rnn(inputs, hidden, seq)
 
-    rnn = ConditionedRNN(3,3)
+    rnn = ConditionedRNN(3,num_chars=3)
     seq = Variable(torch.zeros([1,10,3]))
     inputs = Variable(torch.zeros(1,1,3))
     hidden = rnn.init_hidden()
@@ -112,7 +112,7 @@ def test_forward_batch():
     text_len = 10
     alpha_size = 3
 
-    rnn = ConditionedRNN(1,alpha_size)
+    rnn = ConditionedRNN(1,num_chars=alpha_size)
 
     text = Variable(torch.rand([batch_len,text_len,alpha_size]))
     inputs = Variable(torch.rand(seq_len, batch_len, features))

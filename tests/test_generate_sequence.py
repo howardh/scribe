@@ -30,15 +30,15 @@ def test_conditioned_no_errors():
     sentence_vec = sentence_to_vectors('abcabc',d)
     sentence_vec = Variable(torch.from_numpy(sentence_vec).float(), requires_grad=False)
 
-    rnn = ConditionedRNN(1,3)
+    rnn = ConditionedRNN(1,num_chars=3)
     strokes = generate_conditioned_sequence(rnn, 10, sentence_vec)
     plot_stroke(strokes, 'strokes.png')
 
-    rnn = ConditionedRNN(20,3)
+    rnn = ConditionedRNN(20,num_chars=3)
     strokes = generate_conditioned_sequence(rnn, 10, sentence_vec)
     plot_stroke(strokes, 'strokes.png')
 
-    rnn = ConditionedRNN(20,3)
+    rnn = ConditionedRNN(20,num_chars=3)
     strokes = generate_conditioned_sequence(rnn, 10, sentence_vec, bias=10)
     plot_stroke(strokes, 'strokes.png')
 
