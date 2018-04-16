@@ -3,6 +3,52 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import numpy as np
+from tqdm import tqdm
+
+#class MaskFunction(torch.autograd.Function):
+#    @staticmethod
+#    def forward(self, x, mask):
+#        self.save_for_backward(mask)
+#        return x*mask.float()
+#
+#    @staticmethod
+#    def backward(self, grad):
+#        mask, = self.saved_variables
+#        return grad*mask.float(), None
+
+class MaskFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(self, x, mask):
+        self.save_for_backward(mask)
+        return x[mask].view(-1)
+
+    @staticmethod
+    def backward(self, grad):
+        mask, = self.saved_variables
+        output = torch.zeros(mask.size()).view(-1)
+        if grad.is_cuda:
+            output = output.cuda()
+        gi = 0
+        for i,m in enumerate(mask.view(-1)):
+            if m.all():
+                output[i] = grad.data.view(-1)[gi]
+                gi += 1
+        output = Variable(output.view(mask.size()))
+        if (grad.size()[0] != torch.sum(mask)).any():
+            print("mask ", mask)
+            print("grads ", grad)
+            print("output ", output)
+        return output, None
+
+def print_avg_grad(rnn):
+    grads = []
+    vals = []
+    for p in rnn.parameters():
+        grads+= list(np.abs(p.grad.view(-1).data.cpu().numpy()))
+        vals += list(np.abs(p.view(-1).data.cpu().numpy()))
+    tqdm.write('Average grad: %f, Average vals: %f' % (np.mean(grads), np.mean(vals)))
+    return np.mean(grads)
+
 
 def prob(x, y):
     """

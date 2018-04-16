@@ -4,8 +4,55 @@ from torch.autograd import Variable
 
 from models import ConditionedRNN
 from models import WindowLayer
+from models import WindowFunction
+
+def test_window_function():
+    window = WindowFunction()
+
+    # one character sequence
+    batch_size = 1
+    num_components = 1
+    seq_len = 2
+    num_chars = 1
+    seq = Variable(torch.ones([batch_size,seq_len,num_chars]))
+    a = Variable(torch.ones([batch_size,1,num_components]))
+    b = Variable(torch.ones([batch_size,1,num_components]))
+    k = Variable(torch.ones([batch_size,1,num_components]))
+    output = window(a,b,k,seq)
+
+    diff = torch.abs(output - (np.exp(-1)+1))
+    assert (diff < 0.0000001).all()
+
+    # two character sequence
+    batch_size = 1
+    num_components = 1
+    seq_len = 2
+    num_chars = 2
+    seq = Variable(torch.Tensor([[[1,0],[0,1]]]))
+    a = Variable(torch.ones([batch_size,1,num_components]))
+    b = Variable(torch.ones([batch_size,1,num_components]))
+    k = Variable(torch.ones([batch_size,1,num_components]))
+    output = window(a,b,k,seq)
+
+    expected_output = Variable(torch.Tensor([[np.exp(-1),1]]))
+
+    diff = torch.abs(output - expected_output)
+    assert (diff < 0.0000001).all()
 
 def test_window_forward_no_errors():
+    window = WindowLayer(10,10,1,3)
+    seq = Variable(torch.zeros([1,10,3]))
+    inputs = Variable(torch.zeros([1,1,10]))
+    hidden = window.init_hidden()
+    window(inputs, hidden, seq)
+
+    window = WindowLayer(10,10,2,3)
+    seq = Variable(torch.zeros([1,10,3]))
+    inputs = Variable(torch.zeros([1,1,10]))
+    hidden = window.init_hidden()
+    window(inputs, hidden, seq)
+
+def test_window_forward():
     window = WindowLayer(10,10,1,3)
     seq = Variable(torch.zeros([1,10,3]))
     inputs = Variable(torch.zeros([1,1,10]))

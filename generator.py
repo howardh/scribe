@@ -6,6 +6,7 @@ import numpy as np
 
 from models import GeneratorRNN
 from models import ConditionedRNN
+from data import unnormalize_strokes
 
 def generate_sequence(rnn : GeneratorRNN,
         length : int,
@@ -56,6 +57,8 @@ def generate_sequence(rnn : GeneratorRNN,
         inputs.data[0][0][0] = int(lift)
         inputs.data[0][0][1] = sample[0]
         inputs.data[0][0][2] = sample[1]
+
+    strokes = unnormalize_strokes(strokes, rnn.mean, rnn.std)
 
     return strokes
 
@@ -112,6 +115,8 @@ def generate_conditioned_sequence(rnn : ConditionedRNN, length : int,
         inputs.data[0][0][0] = int(lift)
         inputs.data[0][0][1] = sample[0]
         inputs.data[0][0][2] = sample[1]
+
+    strokes = unnormalize_strokes(strokes, rnn.mean, rnn.std)
 
     return strokes
 

@@ -7,10 +7,16 @@ import numpy as np
 from tqdm import tqdm
 
 from . import prob
+from . import print_avg_grad 
+from . import MaskFunction
 from data import batch
 from data import batch_min
+from data import unnormalize_strokes
 from generator import generate_sequence
 from models import GeneratorRNN
+from utils import plot_stroke
+
+mask_function = MaskFunction.apply
 
 def compute_loss(rnn, strokes, mask=None):
     seq_len = strokes.shape[0]
@@ -33,10 +39,12 @@ def compute_loss(rnn, strokes, mask=None):
         y = (e,pi,mu,sigma,rho)
         x2 = strokes_var[i+1].view(1,-1,3)
 
-
-        likelihood = torch.masked_select(prob(x2,y),mask[i,:])
+        likelihood = mask_function(prob(x2,y),mask[i,:])
         likelihood = likelihood[(likelihood > 0.00000001).detach()]
         loss = -torch.log(likelihood)
+        #likelihood = prob(x2,y)
+        #loss = -torch.log(likelihood)
+        #loss = mask_function(loss, mask[i,:])
         if (loss==0).all():
             continue
         if not mask[i,:].all():
@@ -108,8 +116,6 @@ def train_all(rnn : GeneratorRNN, optimizer : torch.optim.Optimizer, data):
             if i%50 == 0:
                 for b in [0,0.1,1,5]:
                     generated_strokes = generate_sequence(rnn, 700, bias=b)
-                    generated_strokes = unnormalize_strokes(generated_strokes,
-                            rnn.mean, rnn.std)
                     file_name = 'output/uncond/%d-%s.png'%(i,b)
                     plot_stroke(generated_strokes, file_name)
                     tqdm.write('Writing file: %s' % file_name)
@@ -122,6 +128,12 @@ def train_all_random_batch(rnn : GeneratorRNN, optimizer :
         torch.optim.Optimizer, data, output_directory='./output', tail=True):
     batch_size=100
     i = 0
+    model_dir = os.path.join(output_directory, 'models_batch_uncond')
+    sample_dir = os.path.join(output_directory, 'batch_uncond')
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    if not os.path.exists(sample_dir):
+        os.makedirs(sample_dir)
     pbar = tqdm()
     while True:
         index = np.random.choice(range(len(data)-batch_size),size=1)[0]
@@ -129,12 +141,10 @@ def train_all_random_batch(rnn : GeneratorRNN, optimizer :
         if i%50 == 0:
             for b in [0,0.1,1,5]:
                 generated_strokes = generate_sequence(rnn, 700, bias=b)
-                generated_strokes = unnormalize_strokes(generated_strokes,
-                        rnn.mean, rnn.std)
-                file_name = os.path.join(output_directory,'batch_uncond/%d-%s.png'%(i,b))
+                file_name = os.path.join(sample_dir,'%d-%s.png'%(i,b))
                 plot_stroke(generated_strokes, file_name)
                 tqdm.write('Writing file: %s' % file_name)
-            model_file_name = os.path.join(output_directory, 'models_batch_uncond/%d.pt'%i)
+            model_file_name = os.path.join(model_dir, '%d.pt'%i)
             torch.save(rnn.state_dict(), model_file_name)
         i+=1
         if tail:

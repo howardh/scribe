@@ -6,9 +6,22 @@ from models import GeneratorRNN
 import training
 from training import prob
 from training import normal
+from training import MaskFunction
+from training import create_optimizer
 from training.unconditioned import train
 from training.unconditioned import compute_loss
+from training.unconditioned import train_batch
 from data import batch
+
+def test_mask():
+    x = Variable(torch.ones(3,3).float())
+    mask = Variable(torch.ones(3,3).byte())
+    f = MaskFunction.apply
+    mask.data[0,0] = 0
+    expected_output = torch.Tensor([[0,1,1],[1,1,1],[1,1,1]]).float()
+    output = f(x,mask)
+    output = output.data
+    assert (expected_output==output).all()
 
 def test_prob_size():
     rnn = GeneratorRNN(1)
@@ -183,6 +196,20 @@ def test_compute_loss_batch_different_length():
     print(loss3)
     diff = torch.abs(loss3-(loss1+loss2))
     assert (diff<0.00001).all(), ("Difference too large: %s"%diff)
+
+def test_compute_loss_batch_different_length_long():
+    rnn = GeneratorRNN(1)
+    optimizer = create_optimizer(rnn)
+
+    max_len = 500
+    seq_len = [2]*49+[max_len]
+    batch_len = 50
+    features = 3
+
+    strokes = [np.random.rand(l, features) for l in seq_len]
+    batched_strokes, mask = batch(strokes)
+    train_batch(rnn, optimizer, strokes, batched_strokes, mask)
+    assert False
 
 def test_train():
     rnn = GeneratorRNN(1)

@@ -90,29 +90,17 @@ class GeneratorRNN(torch.nn.Module):
     def is_cuda(self):
         return next(self.parameters()).is_cuda
 
-class WindowLayer(torch.nn.Module):
-    def __init__(self, in_features, out_features, num_components=1, num_chars=26):
-        super(WindowLayer,self).__init__()
-        self.num_chars = num_chars
-        self.num_components = num_components
-        self.linear = torch.nn.Linear(in_features=in_features,out_features=3*self.num_components)
-
-    def forward(self, inputs, hidden, sequence):
+class WindowFunction(torch.nn.Module):
+    def forward(self, a, b, k, sequence):
         """
-        input -- 2D array
-            batch size * features
-        sequence -- An array of one-hot encodings for characters in 
+        a -- batch_size * 1 * num_components
+        b -- batch_size * 1 * num_components
+        k -- batch_size * 1 * num_components
+        sequence -- batch_size * seq_len * num_chars
+        return -- batch_size * num_chars
         """
-        n = self.num_components
-        output = self.linear(inputs)
-        output = torch.exp(output)
-        output = output.view(-1,3,n)
-        hidden = hidden + output[:,2,:]
-        a = output[:,0,:].contiguous().view(-1,1,n)
-        b = output[:,1,:].contiguous().view(-1,1,n)
-        k = hidden.contiguous().view(-1,1,n)
         seq_len = sequence.size()[1]
-        if self.is_cuda():
+        if sequence.is_cuda:
             r = Variable(torch.arange(seq_len).view(seq_len,1).cuda(), requires_grad=False)
         else:
             r = Variable(torch.arange(seq_len).view(seq_len,1), requires_grad=False)
@@ -121,6 +109,32 @@ class WindowLayer(torch.nn.Module):
         window_weight = window_weight.view(-1,1,seq_len)
         window = window_weight.bmm(sequence) # [-1,seq_len] * [-1,seq_len, features]
         window = window.permute(1,0,2)
+        return window
+
+class WindowLayer(torch.nn.Module):
+    def __init__(self, in_features, out_features, num_components=1, num_chars=None):
+        super(WindowLayer,self).__init__()
+        self.num_chars = num_chars
+        self.num_components = num_components
+        self.linear = torch.nn.Linear(in_features=in_features,out_features=3*self.num_components)
+        self.window = WindowFunction()
+
+    def forward(self, inputs, hidden, sequence):
+        """
+        input -- 2D array
+            batch size * features
+        sequence -- An array of one-hot encodings for characters in 
+        """
+        n = self.num_components
+        seq_len = sequence.size()[1]
+        output = self.linear(inputs)
+        output = torch.exp(output)
+        output = output.view(-1,3,n)
+        hidden = hidden + output[:,2,:]
+        a = output[:,0,:].contiguous().view(-1,1,n)
+        b = output[:,1,:].contiguous().view(-1,1,n)
+        k = hidden.contiguous().view(-1,1,n)
+        window = self.window(a,b,k,sequence)
 
         terminal = WindowLayer.is_terminal(k, seq_len)
 
@@ -144,6 +158,8 @@ class ConditionedRNN(torch.nn.Module):
     def __init__(self, num_components=1, mean=[0,0], std=[1,1], num_chars=None):
         super(ConditionedRNN,self).__init__()
         # See page 23 for parameters
+        if num_chars is None:
+            raise ValueError("Must specify the number of characters")
         self.num_chars = num_chars
         self.num_components = num_components
         self.hidden_size = 400
